@@ -1,0 +1,9 @@
+walinuxagent (1.0~git20120606.c16f5e9-0ubuntu1) quantal; urgency=low
+
+  * Initial package import (LP: #1014864).
+  * Ubuntu specific modifications:
+    - Made resolvconf aware during deprovisioning
+    - Added Ubuntu upstart job
+    - Added ability to prevent agent startup.
+
+ -- Ben Howard <ben.howard@ubuntu.com>  Fri, 22 Jun 2012 09:10:22 -0600

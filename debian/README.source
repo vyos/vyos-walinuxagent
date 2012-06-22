@@ -1,0 +1,7 @@
+version=3
+# Upstream have not yet released so its based on a git snapshot from:
+#
+#  https://github.com/Windows-Azure/WALinuxAgent
+#
+# See the get-packaged-orig-source target in debian/rules for more
+# information.
