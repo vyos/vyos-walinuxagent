@@ -9,7 +9,7 @@ XS-Python-Version: all
 Homepage: http://go.microsoft.com/fwlink/?LinkId=250998
 
 Package: walinuxagent
-Architecture: all
+Architecture: i386 amd64
 Depends: python (>= 2.4),
          openssl (>=1.0),
          openssh-server (>=1:5.9p1),
