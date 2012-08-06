@@ -1979,6 +1979,13 @@ author "Ben Howard <ben.howard@canonical.com>"
 start on (filesystem and started rsyslog)
 
 pre-start script
+
+	[ -r /etc/default/walinuxagent ] && . /etc/default/walinuxagent
+
+	if [ "$WALINUXAGENT_ENABLED" != "1" ]; then
+		exit 1
+	fi
+
 	if [ ! -x /usr/sbin/waagent ]; then
 		exit 1
 	fi
