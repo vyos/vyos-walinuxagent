@@ -1,3 +1,9 @@
+walinuxagent (1.0~git20120606.c16f5e9-0ubuntu2) quantal; urgency=low
+
+  * Restrict target architectures to i386 and amd64. 
+
+ -- James Page <james.page@ubuntu.com>  Mon, 06 Aug 2012 10:24:07 +0100
+
 walinuxagent (1.0~git20120606.c16f5e9-0ubuntu1) quantal; urgency=low
 
   * Initial package import (LP: #1014864).
