@@ -1,14 +1,13 @@
 #!/usr/bin/make -f
 
-DEB_UPSTREAM_VERSION=$(shell dpkg-parsechangelog | sed -rne 's,^Version: ([^-]+).*,\1,p')
-ORIG_COMMIT=$(shell echo $(DEB_UPSTREAM_VERSION) |  cut -f3 -d\. )
+DEB_VERSION=$(shell dpkg-parsechangelog | sed -rne 's,^Version: ([^-]+).*,\1,p')
 ORIG_SRC=https://github.com/Windows-Azure/WALinuxAgent
 
 get-packaged-orig-source:
 	git clone --separate-git-dir=.git \
 		$(ORIG_SRC) orig_source
-	git archive --format=tar.gz $(ORIG_COMMIT) \
-		-o walinuxagent_$(DEB_UPSTREAM_VERSION).orig.tar.gz
+	git archive --format=tar.gz WALinuxAgent-$(DEB_VERSION) \
+		-o walinuxagent_$(DEB_VERSION).orig.tar.gz
 
 %:
 	dh $@ --with python2
