@@ -1,3 +1,10 @@
+walinuxagent (1.1-0ubuntu1) raring; urgency=low
+
+  * New upstream version (LP: #1078074, #1077147).
+  * Moved upstart job to be managed by packaging.
+
+ -- Ben Howard <ben.howard@ubuntu.com>  Wed, 14 Nov 2012 10:59:37 -0700
+
 walinuxagent (1.0~git20120606.c16f5e9-0ubuntu2) quantal; urgency=low
 
   * Restrict target architectures to i386 and amd64. 
