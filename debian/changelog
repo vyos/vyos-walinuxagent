@@ -1,3 +1,24 @@
+walinuxagent (1.1-0ubuntu2) raring; urgency=low
+
+  * Stop upgrades purging walinuxagent meta-data and configuration files
+    (LP: #1079897):
+    - d/{control,walinuxagent-data-saver.preinst}: Added
+      walinuxagent-data-saver package to ensure that agent generated data is
+      not lost on upgrade by diverting /usr/sbin/waagent during the upgrade
+      process.
+    - d/walinuxagent-data-saver.lintian-overrides: Override errors about use
+      of dpkg-divert in this package.
+    - d/control: Added Pre-Depends to walinuxagent on walinuxagent-data-saver.
+    - d/prerm: Stop calling waagent --uninstall during reconfiguration
+      and upgrade, specify files to remove manually for purge.
+    - d/postinst: Remove divert of /usr/sbin/waagent prior to completion of
+      package install.
+  * d/preinst: If upgrading from package version with unmanaged waagent upstart
+    configuration stop the agent and remove the upstart configuration.
+  * d/upstart: Tidied description in upstart job.
+
+ -- James Page <james.page@ubuntu.com>  Fri, 23 Nov 2012 16:07:41 +0000
+
 walinuxagent (1.1-0ubuntu1) raring; urgency=low
 
   * New upstream version (LP: #1078074, #1077147).

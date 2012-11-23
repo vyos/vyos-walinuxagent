@@ -1,6 +1,4 @@
-#walinuxagent - start Windows Azure agent
-
-description "walinuxagent"
+description "Windows Azure Linux agent"
 author "Ben Howard <ben.howard@canonical.com>"
 
 start on mounted MOUNTPOINT=/
