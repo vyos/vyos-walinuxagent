@@ -1,3 +1,28 @@
+walinuxagent (1.2-0ubuntu1) raring; urgency=low
+
+  * New upstream version (LP: #1077148)
+  * Upstream features:
+    - Added - load ata_piix.ko module loaded if needed for CDROM device support
+    - Additional logging for DoDhcpWork()
+    - Update sock.recv timeout from 30 to 10 seconds
+    - Fix: Linux waagent deprovision, user is not deleted properly
+    - Fix: Make LBProbeResponder construction more robust
+    - Fix: Agent fails to provision user with public/private key pairs
+    - Fix: DHCP broadcast response not received
+    - Fix: Linux agent fails to delete root user password
+    - Fix: Linux agent should report error messages to Fabric when
+           passed an invalid hostname.
+  * Dropped Ubuntu specific patches
+    - Removed debian/patches/000_resolv-conf.patch as upstream now supports
+      resolvconf properly.
+    - Removed debian/patches/001-strip-init-d.patch as redundant now that
+      upstream understands Ubuntu upstart. Upstream script does not
+      handle the removal of the upstart job anyway.
+  * Added debian/patches/000_use_package_upstart.patch to use packaged
+    upstart job over in-script upstart.
+
+ -- Ben Howard <ben.howard@ubuntu.com>  Fri, 07 Dec 2012 16:52:42 -0700
+
 walinuxagent (1.1-0ubuntu2) raring; urgency=low
 
   * Stop upgrades purging walinuxagent meta-data and configuration files
@@ -28,7 +53,7 @@ walinuxagent (1.1-0ubuntu1) raring; urgency=low
 
 walinuxagent (1.0~git20120606.c16f5e9-0ubuntu2) quantal; urgency=low
 
-  * Restrict target architectures to i386 and amd64. 
+  * Restrict target architectures to i386 and amd64.
 
  -- James Page <james.page@ubuntu.com>  Mon, 06 Aug 2012 10:24:07 +0100
 

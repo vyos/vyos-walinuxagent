@@ -1,2 +1,1 @@
-000_resolv-conf.patch
-001-strip-init-d.patch
+000_use_package_upstart.patch

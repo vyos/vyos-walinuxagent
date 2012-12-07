@@ -43,10 +43,11 @@ import threading
 import time
 import traceback
 import xml.dom.minidom
+import commands
 
 GuestAgentName = "WALinuxAgent"
 GuestAgentLongName = "Windows Azure Linux Agent"
-GuestAgentVersion = "WALinuxAgent-1.1"
+GuestAgentVersion = "WALinuxAgent-1.2"
 ProtocolVersion = "2011-12-31"
 
 Config = None
@@ -164,6 +165,20 @@ def Run(a):
     LogIfVerbose(a)
     return os.system(a)
 
+def  RunSafe(cmd):
+    LogIfVerbose(cmd)
+    # for python2.1 double try, in order to use a finally...
+    try:                                     
+        try:
+            (exit_status,output) = commands.getstatusoutput(cmd)
+        except OSError,e : # just catch the exception and proceed
+            LogIfVerbose( ("OSError " + str(e) + " caught") )
+            return exit_status,output
+        else:
+            return exit_status,output
+    finally:
+        pass
+
 def GetNodeTextData(a):
     for b in a.childNodes:
         if b.nodeType == b.TEXT_NODE:
@@ -272,6 +287,7 @@ def DeleteAccount(user):
     if userentry[2] < uidmin:
         Error("DeleteAccount: " + user + " is a system user. Will not delete account.")
         return
+    Run("> /var/run/utmp") #Delete utmp to prevent error if we are the 'user' deleted
     Run("userdel -f -r " + user)
     try:
         os.remove("/etc/sudoers.d/waagent")
@@ -532,9 +548,11 @@ class Util(object):
 def LoadBalancerProbeServer(port):
 
     class T(object):
-        def __init__(self, port):
+        def __init__(self, ip, port):
+            if port == None or ip == None :
+                return
             self.ProbeCounter = 0
-            self.server = SocketServer.TCPServer((GetIpv4Address(), port), TCPHandler)
+            self.server = SocketServer.TCPServer((ip, port), TCPHandler)
             self.server_thread = threading.Thread(target = self.server.serve_forever)
             self.server_thread.setDaemon(True)
             self.server_thread.start()
@@ -556,8 +574,20 @@ def LoadBalancerProbeServer(port):
             log("Received LB probe # " + strCounter)
             self.request.recv(1024)
             self.request.send("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Type: text/html\r\nDate: " + self.GetHttpDateTimeNow() + "\r\n\r\nOK")
-
-    context = T(port)
+            
+    for retry in range(1,6):
+        context=None
+        ip = GetIpv4Address()
+        if ip == None :
+            Log("LoadBalancerProbeServer: GetIpv4Address() returned None, sleeping 10 before retry " + str(retry+1) )
+            time.sleep(10)
+        else:
+            try:
+                context = T(ip,port)
+                break
+            except Exception, e:
+                Log("LoadBalancerProbeServer: Exception contructing socket server: " + str(e))
+        Log("LoadBalancerProbeServer: Retry socket server construction #" + str(retry+1) )
     return context
 
 class ConfigurationProvider(object):
@@ -633,8 +663,9 @@ class EnvMonitor(object):
     def SetHostName(self, name):
         if socket.gethostname() == name:
             self.published = True
-        else:
-            Run("hostname " + name)
+        elif Run("hostname " + name):
+            Error("Error: SetHostName: Cannot set hostname to " + name)
+            return ("Error: SetHostName: Cannot set hostname to " + name)
 
     def IsNamePublished(self):
         return self.published
@@ -689,9 +720,9 @@ class Certificates(object):
         output = open("temp.pem", "w")
         for line in file.readlines():
             output.write(line)
-            if line.startswith("-----END PRIVATE KEY-----") or line.startswith("-----END CERTIFICATE-----"):
+            if re.match(r'[-]+END .*?(KEY|CERTIFICATE)[-]+$',line):
                 output.close()
-                if line.startswith("-----END PRIVATE KEY-----"):
+                if re.match(r'[-]+END .*?KEY[-]+$',line):
                     os.rename("temp.pem", str(pindex) + ".prv")
                     pindex += 1
                 else:
@@ -1241,7 +1272,8 @@ class OvfEnv(object):
 
     def Process(self):
         error = None
-        WaAgent.EnvMonitor.SetHostName(self.ComputerName)
+        error=WaAgent.EnvMonitor.SetHostName(self.ComputerName)
+        if error: return error
         if self.DisableSshPasswordAuthentication:
             filepath = "/etc/ssh/sshd_config"
             # Disable RFC 4252 and RFC 4256 authentication schemes.
@@ -1566,7 +1598,7 @@ class Agent(Util):
         # And workaround incompatibility with Windows Azure DHCP servers.
         #
         ShortSleep = False # Sleep 1 second before retrying DHCP queries.
-
+        ifname=None
         if not IsWindows():
             Run("iptables -D INPUT -p udp --dport 68 -j ACCEPT")
             Run("iptables -I INPUT -p udp --dport 68 -j ACCEPT")
@@ -1594,14 +1626,19 @@ class Agent(Util):
                 if missingDefaultRoute:
                     # This is required because sending after binding to 0.0.0.0 fails with
                     # network unreachable when the default gateway is not set up.
-                    sock.bind((GetIpv4Address(), 68))
-                else:
-                    sock.bind(("0.0.0.0", 68))
+                    for i in PossibleEthernetInterfaces:
+                        try:
+                            if Linux_ioctl_GetIpv4Address(i):
+                                ifname=i
+                        except IOError, e:
+                            pass
+                    Log("DoDhcpWork: Missing default route - adding broadcast route for DHCP.")
+                    Run("route add 255.255.255.255 dev " + ifname)
+                sock.bind(("0.0.0.0", 68)) 
                 sock.sendto(sendData, ("<broadcast>", 67))
-                sock.settimeout(30)
-                LogIfVerbose("DoDhcpWork: Setting socket.timeout=10, entering recv")
+                sock.settimeout(10)
+                Log("DoDhcpWork: Setting socket.timeout=10, entering recv")
                 receiveBuffer = sock.recv(1024)
-                sock.close()
                 endpoint = self.HandleDhcpResponse(sendData, receiveBuffer)
                 if endpoint == None:
                     LogIfVerbose("DoDhcpWork: No endpoint found")
@@ -1618,6 +1655,12 @@ class Agent(Util):
             except Exception, e:
                 ErrorWithPrefix(prefix, str(e))
                 ErrorWithPrefix(prefix, traceback.format_exc())
+            finally:
+                sock.close()
+                if missingDefaultRoute:
+                    #We added this route - delete it
+                    Run("route del 255.255.255.255 dev " + ifname) 
+                    Log("DoDhcpWork: Removing broadcast route for DHCP.")
         return None
 
     def UpdateAndPublishHostName(self, name):
@@ -1725,24 +1768,49 @@ class Agent(Util):
         dvd = "/dev/hdc"
         if os.path.exists("/dev/sr0"):
             dvd = "/dev/sr0"
+        modloaded=False
         if Run("fdisk -l " + dvd + " | grep Disk"):
-            return
+            # Is it possible to load a module for ata_piix?
+            retcode,krn=RunSafe('uname -r')
+            if retcode:
+                Error("Unable to provision: Failed to call uname -a")
+                return "Unable to provision: Failed to mount DVD."
+            krn_pth='/lib/modules/'+krn+'/kernel/drivers/ata/ata_piix.ko'
+            if not os.path.isfile(krn_pth):
+                Error("Unable to provision: Failed to locate ata_piix.ko")
+                return "Unable to provision: Failed to mount DVD."
+            retcode,output=RunSafe('insmod ' + krn_pth)
+            if retcode:
+                Error("Unable to provision: Failed to insmod " + krn+pth)
+                return "Failed to retrieve provisioning data (0x01)."
+            modloaded=True
+            Log("Provision: Loaded " + krn_pth + " driver for ATAPI CD-ROM")
+            # we have succeeded loading the ata_piix mod
+            for i in range(10): # we may have to wait 
+                if os.path.exists("/dev/sr0"):
+                    dvd = "/dev/sr0"
+                    break
+                Log("Waiting for DVD - sleeping 1 - "+str(i+1)+" try...")
+                time.sleep(1)
         CreateDir("/mnt/cdrom/secure", "root", 0700)
-        if Run("mount " + dvd + " /mnt/cdrom/secure"):
-            Error("Unable to provision: Failed to mount DVD.")
-            return "Failed to retrieve provisioning data (0x01)."
+        Run("mount " + dvd + " /mnt/cdrom/secure")
         if not os.path.isfile("/mnt/cdrom/secure/ovf-env.xml"):
             Error("Unable to provision: Missing ovf-env.xml on DVD.")
             return "Failed to retrieve provisioning data (0x02)."
         ovfxml = GetFileContents("/mnt/cdrom/secure/ovf-env.xml")
         SetFileContents("ovf-env.xml", re.sub("<UserPassword>.*?<", "<UserPassword>*<", ovfxml))
         Run("umount /mnt/cdrom/secure")
+        if modloaded:
+            Run('rmmod ' + krn_pth)
         error = None
         if ovfxml != None:
             Log("Provisioning image using OVF settings in the DVD.")
             ovfobj = OvfEnv().Parse(ovfxml)
             if ovfobj != None:
                 error = ovfobj.Process()
+                if error :
+                    Error ("Provisioninig image FAILED " + error)
+                    return ("Provisioninig image FAILED " + error)
         # This is done here because regenerated SSH host key pairs may be potentially overwritten when processing the ovfxml
         fingerprint = os.popen("ssh-keygen -lf /etc/ssh/ssh_host_" + type + "_key.pub").read().rstrip().split()[1].replace(':','')
         self.ReportRoleProperties(fingerprint)
@@ -1834,6 +1902,9 @@ class Agent(Util):
                     currentPort = goalPort
                     if currentPort != None and lbProbeResponder == True:
                         self.LoadBalancerProbeServer = LoadBalancerProbeServer(currentPort)
+                        if self.LoadBalancerProbeServer == None :
+                            lbProbeResponder = False
+                            Log("Unable to create LBProbeResponder.")
 
             if program != None and DiskActivated == True:
                 Children.append(subprocess.Popen([program, "Ready"]))
@@ -1974,6 +2045,34 @@ case "$1" in
         RETVAL=1
 esac
 exit $RETVAL
+"""
+
+Init_Ubuntu = """\
+#walinuxagent - start Windows Azure agent
+
+description "walinuxagent"
+author "Ben Howard <ben.howard@canonical.com>"
+
+start on (filesystem and started rsyslog)
+
+pre-start script
+
+	WALINUXAGENT_ENABLED=1
+    [ -r /etc/default/walinuxagent ] && . /etc/default/walinuxagent
+
+    if [ "$WALINUXAGENT_ENABLED" != "1" ]; then
+        exit 1
+    fi
+
+    if [ ! -x /usr/sbin/waagent ]; then
+        exit 1
+    fi
+
+    #Load the udf module
+    modprobe -b udf
+end script
+
+exec /usr/sbin/waagent -daemon
 """
 
 Init_Debian = """\
@@ -2132,7 +2231,7 @@ def Install():
         if Run("rpm --quiet -q python-pyasn1"):
             Error(GuestAgentLongName + " requires python-pyasn1.")
             return 1
-    if UsesDpkg() and Run("dpkg -l network-manager | grep -q ^un"):
+    if UsesDpkg() and not Run("dpkg-query -s network-manager >/dev/null 2>&1"):
         Error(GuestAgentLongName + " is not compatible with network-manager.")
         return 1
     for a in RulesFiles:
@@ -2141,18 +2240,28 @@ def Install():
                 os.remove(GetLastPathElement(a))
             shutil.move(a, ".")
             Warn("Moved " + a + " -> " + LibDir + "/" + GetLastPathElement(a) )
-    filename = "waagent"
-    filepath = "/etc/init.d/" + filename
-    distro = IsRedHat() + IsDebian() * 2 + IsSuse() * 3
-    if distro == 0:
-        Error("Unable to detect Linux Distribution.")
-        return 1
-    init = [[Init_RedHat, "chkconfig --add " + filename],
-            [Init_Debian, "update-rc.d " + filename + " defaults"],
-            [Init_Suse, "insserv " + filename]][distro - 1]
-    SetFileContents(filepath, init[0])
-    os.chmod(filepath, 0755)
-    Run(init[1])
+
+    if IsUbuntu():
+        # Support for Ubuntu's upstart configuration
+        filename="waagent.conf"
+        filepath = "/etc/init/" + filename
+        SetFileContents(filepath, Init_Ubuntu)
+        os.chmod(filepath, 0644)
+
+    else:
+        # Regular init.d configurations
+        filename = "waagent"
+        filepath = "/etc/init.d/" + filename
+        distro = IsRedHat() + IsDebian() * 2 + IsSuse() * 3
+        if distro == 0:
+            Error("Unable to detect Linux Distribution.")
+            return 1
+        init = [[Init_RedHat, "chkconfig --add " + filename],
+                [Init_Debian, "update-rc.d " + filename + " defaults"],
+                [Init_Suse, "insserv " + filename]][distro - 1]
+        SetFileContents(filepath, init[0])
+        os.chmod(filepath, 0755)
+        Run(init[1])
     if os.path.isfile("/etc/waagent.conf"):
         try:
             os.remove("/etc/waagent.conf.old")
@@ -2226,7 +2335,10 @@ def Deprovision(force, deluser):
 
     print("WARNING! The waagent service will be stopped.")
     print("WARNING! All SSH host key pairs will be deleted.")
-    print("WARNING! Nameserver configuration in /etc/resolv.conf will be deleted.")
+    if IsUbuntu():
+        print("WARNING! Nameserver configuration in /etc/resolvconf/resolv.conf.d/{tail,originial} will be deleted.")
+    else:
+        print("WARNING! Nameserver configuration in /etc/resolv.conf will be deleted.")
     print("WARNING! Cached DHCP leases will be deleted.")
 
     delRootPass = Config.get("Provisioning.DeleteRootPassword")
@@ -2262,12 +2374,29 @@ def Deprovision(force, deluser):
         Run("rm -f " + a + "/*")
 
     # Clear LibDir, remove nameserver and root bash history
-    for f in os.listdir(LibDir) + ["/etc/resolv.conf", "/root/.bash_history", "/var/log/waagent.log"]:
+    fileBlackList = [ "/root/.bash_history", "/var/log/waagent.log" ]
+
+    if IsUbuntu():
+        # Ubuntu uses resolv.conf by default, so removing /etc/resolv.conf will
+        # break resolvconf. Therefore, we check to see if resolvconf is in use,
+        # and if so, we remove the resolvconf artifacts.
+
+        Log("Deprovision: Ubuntu specific resolv.conf behavior selected.")
+        if os.path.realpath('/etc/resolv.conf') != '/run/resolvconf/resolv.conf':
+            Log("resolvconf is not configured. Removing /etc/resolv.conf")
+            fileBlackList.append('/etc/resolv.conf')
+        else:
+            Log("resolvconf is enabled; leaving /etc/resolv.conf intact")
+            resolvConfD = '/etc/resolvconf/resolv.conf.d/'
+            fileBlackList.extend([resolvConfD + 'tail', resolvConfD + 'originial' ])
+    else:
+        fileBlackList.extend(os.listdir(LibDir) + ['/etc/resolv.conf'])
+
+    for f in os.listdir(LibDir) + fileBlackList:
         try:
             os.remove(f)
         except:
             pass
-
     return 0
 
 def SwitchCwd():
