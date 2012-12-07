@@ -1,0 +1,16 @@
+--- a/waagent
++++ b/waagent
+@@ -2242,11 +2242,8 @@ def Install():
+             Warn("Moved " + a + " -> " + LibDir + "/" + GetLastPathElement(a) )
+ 
+     if IsUbuntu():
+-        # Support for Ubuntu's upstart configuration
+-        filename="waagent.conf"
+-        filepath = "/etc/init/" + filename
+-        SetFileContents(filepath, Init_Ubuntu)
+-        os.chmod(filepath, 0644)
++        # Use the Ubuntu packaged upstart job.
++        Log("Using Ubuntu packaged upstart job. Skipping upstart installation")
+ 
+     else:
+         # Regular init.d configurations
