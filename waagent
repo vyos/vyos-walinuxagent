@@ -47,11 +47,12 @@ import commands
 
 GuestAgentName = "WALinuxAgent"
 GuestAgentLongName = "Windows Azure Linux Agent"
-GuestAgentVersion = "WALinuxAgent-1.2"
+GuestAgentVersion = "WALinuxAgent-1.3"
 ProtocolVersion = "2011-12-31"
 
 Config = None
 LinuxDistro = "UNKNOWN"
+PackagedForDistro = "UNKNOWN"
 Verbose = False
 WaAgent = None
 DiskActivated = False
@@ -84,6 +85,18 @@ def DetectLinuxDistro():
         return True
     if os.path.isfile("/etc/lsb-release") and "Ubuntu" in GetFileContents("/etc/lsb-release"):
         LinuxDistro = "Ubuntu"
+
+        # Should this run as if it is packaged Ubuntu?
+        if os.path.isfile("/etc/default/walinuxagent"):
+            try:
+                with open('/etc/default/walinuxagent') as f:
+                    for line in f.readlines():
+                        if line == "WAXLINUXAGENT_PACKAGED=1":
+                            PackagedForDistro = "Ubuntu"
+
+            except IOError as e:
+               pass
+
         return True
     if os.path.isfile("/etc/debian_version"):
         LinuxDistro = "Debian"
@@ -99,11 +112,20 @@ def IsRedHat():
 def IsUbuntu():
     return "Ubuntu" in LinuxDistro
 
+def IsPackagedUbuntu():
+    return "Ubuntu" in PackagedForDistro
+
 def IsDebian():
     return IsUbuntu() or "Debian" in LinuxDistro
 
 def IsSuse():
     return "Suse" in LinuxDistro
+
+def IsPackaged():
+    if PackagedForDistro == "UNKNOWN":
+        return False
+
+    return True
 
 def UsesRpm():
     return IsRedHat() or IsSuse()
@@ -166,13 +188,13 @@ def Run(a):
     return os.system(a)
 
 def  RunSafe(cmd):
-    LogIfVerbose(cmd)
+    Log(cmd)
     # for python2.1 double try, in order to use a finally...
     try:                                     
         try:
             (exit_status,output) = commands.getstatusoutput(cmd)
         except OSError,e : # just catch the exception and proceed
-            LogIfVerbose( ("OSError " + str(e) + " caught") )
+            Log( ("OSError " + str(e) + " caught") )
             return exit_status,output
         else:
             return exit_status,output
@@ -549,8 +571,6 @@ def LoadBalancerProbeServer(port):
 
     class T(object):
         def __init__(self, ip, port):
-            if port == None or ip == None :
-                return
             self.ProbeCounter = 0
             self.server = SocketServer.TCPServer((ip, port), TCPHandler)
             self.server_thread = threading.Thread(target = self.server.serve_forever)
@@ -1272,6 +1292,8 @@ class OvfEnv(object):
 
     def Process(self):
         error = None
+        if self.ComputerName == None :
+            return "Error: Hostname missing"
         error=WaAgent.EnvMonitor.SetHostName(self.ComputerName)
         if error: return error
         if self.DisableSshPasswordAuthentication:
@@ -1793,7 +1815,18 @@ class Agent(Util):
                 Log("Waiting for DVD - sleeping 1 - "+str(i+1)+" try...")
                 time.sleep(1)
         CreateDir("/mnt/cdrom/secure", "root", 0700)
-        Run("mount " + dvd + " /mnt/cdrom/secure")
+        #begin mount loop - ten tries - 5 sec wait between
+        for retry in range(1,11):
+            retcode,output=RunSafe("mount -v " + dvd + " /mnt/cdrom/secure")
+            Log(output)
+            if retcode:
+                Log("mount failed on attempt #" + str(retry) )
+            else:
+                Log("mount suceed on attempt #" + str(retry) )
+                break
+            Log("mount loop sleeping 5...")
+            time.sleep(5)
+            
         if not os.path.isfile("/mnt/cdrom/secure/ovf-env.xml"):
             Error("Unable to provision: Missing ovf-env.xml on DVD.")
             return "Failed to retrieve provisioning data (0x02)."
@@ -2241,11 +2274,14 @@ def Install():
             shutil.move(a, ".")
             Warn("Moved " + a + " -> " + LibDir + "/" + GetLastPathElement(a) )
 
-    if IsUbuntu():
-        # Use the Ubuntu packaged upstart job.
-        Log("Using Ubuntu packaged upstart job. Skipping upstart installation")
+    if IsUbuntu() and not IsPackagedUbuntu():
+        # Support for Ubuntu's upstart configuration
+        filename="waagent.conf"
+        filepath = "/etc/init/" + filename
+        SetFileContents(filepath, Init_Ubuntu)
+        os.chmod(filepath, 0644)
 
-    else:
+    elif not IsPackagedUbuntu():
         # Regular init.d configurations
         filename = "waagent"
         filepath = "/etc/init.d/" + filename
@@ -2259,6 +2295,7 @@ def Install():
         SetFileContents(filepath, init[0])
         os.chmod(filepath, 0755)
         Run(init[1])
+
     if os.path.isfile("/etc/waagent.conf"):
         try:
             os.remove("/etc/waagent.conf.old")
@@ -2296,12 +2333,30 @@ def Uninstall():
     if a == 0:
         Error("Unable to detect Linux Distribution.")
         return 1
-    Run("service " + filename + " stop")
-    cmd = ["chkconfig --del " + filename,
-           "update-rc.d -f " + filename + " remove",
-           "insserv -r " + filename][a - 1]
-    Run(cmd)
-    for f in os.listdir(LibDir) + ["/etc/init.d/" + filename, "/etc/waagent.conf", "/etc/logrotate.d/waagent", "/etc/sudoers.d/waagent"]:
+
+    # Managed by dpkg for Packaged Ubuntu
+    if not IsPackaged():
+       Run("service " + filename + " stop")
+       cmd = ["chkconfig --del " + filename,
+              "update-rc.d -f " + filename + " remove",
+              "insserv -r " + filename][a - 1]
+       Run(cmd)
+
+    remove_f = [
+            "/etc/waagent.conf",
+            "/etc/logrotate.d/waagent",
+            "/etc/sudoers.d/waagent",
+            ]
+
+    # For packaged Ubuntu, the script should let the packaging
+    # manage the removal of these files
+    if not IsPackagedUbuntu():
+        remove_f.append([
+            "/etc/init/waagent.conf",
+            "/etc/init.d/" + filename,
+            ])
+
+    for f in os.listdir(LibDir) + remove_f:
         try:
             os.remove(f)
         except:
