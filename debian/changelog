@@ -1,3 +1,9 @@
+walinuxagent (1.3.2-0ubuntu2) saucy; urgency=low
+
+  * Added logic to prevent udev rules.d movement (LP: #1188753)
+
+ -- Ben Howard <ben.howard@ubuntu.com>  Tue, 11 Jun 2013 14:09:58 -0600
+
 walinuxagent (1.3.2-0ubuntu1) raring; urgency=low
 
   * Updated to 1.3.2 as part of Windows Azure requirement (LP: #1158465).

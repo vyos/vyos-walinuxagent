@@ -1,0 +1,42 @@
+--- a/waagent
++++ b/waagent
+@@ -701,12 +701,13 @@ class EnvMonitor(object):
+             dhcpcmd = "pidof dhclient3"
+         dhcppid = RunGetOutput(dhcpcmd,chk_err=False)[1]
+         while not self.shutdown:
+-            for a in RulesFiles:
+-                if os.path.isfile(a):
+-                    if os.path.isfile(GetLastPathElement(a)):
+-                        os.remove(GetLastPathElement(a))
+-                    shutil.move(a, ".")
+-                    Log("EnvMonitor: Moved " + a + " -> " + LibDir)
++            if not IsDebian():
++                for a in RulesFiles:
++                    if os.path.isfile(a):
++                        if os.path.isfile(GetLastPathElement(a)):
++                            os.remove(GetLastPathElement(a))
++                        shutil.move(a, ".")
++                        Log("EnvMonitor: Moved " + a + " -> " + LibDir)
+             if publish != None and publish.lower().startswith("y"):
+                 try:
+                     if socket.gethostname() != self.HostName:
+@@ -2318,12 +2319,13 @@ def Install():
+     if UsesDpkg() and not Run("dpkg-query -s network-manager >/dev/null 2>&1",chk_err=False):  # We want this to fail - supress error logging on error.
+         Error(GuestAgentLongName + " is not compatible with network-manager.")
+         return 1
+-    for a in RulesFiles:
+-        if os.path.isfile(a):
+-            if os.path.isfile(GetLastPathElement(a)):
+-                os.remove(GetLastPathElement(a))
+-            shutil.move(a, ".")
+-            Warn("Moved " + a + " -> " + LibDir + "/" + GetLastPathElement(a) )
++    if not IsDebian():
++        for a in RulesFiles:
++            if os.path.isfile(a):
++                if os.path.isfile(GetLastPathElement(a)):
++                    os.remove(GetLastPathElement(a))
++                shutil.move(a, ".")
++                Warn("Moved " + a + " -> " + LibDir + "/" + GetLastPathElement(a) )
+ 
+     if IsUbuntu() and not IsPackagedUbuntu():
+         # Support for Ubuntu's upstart configuration
