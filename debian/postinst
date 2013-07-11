@@ -7,7 +7,17 @@ fi
 
 case "$1" in
     configure)
+
+        if [ -e /etc/waagent.conf ]; then
+            mv /etc/waagent.conf /etc/waagent.conf.save
+        fi
+
         waagent --setup --force
+
+        if [ -e /etc/waagent.conf.save ]; then
+            mv /etc/waagent.conf /etc/waagent.conf.dpkg-dist
+            mv /etc/waagent.conf.save /etc/waagent.conf
+        fi
     ;;
 
     abort-upgrade|abort-remove|abort-deconfigure)

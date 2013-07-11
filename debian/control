@@ -9,14 +9,15 @@ XS-Python-Version: all
 Homepage: http://go.microsoft.com/fwlink/?LinkId=250998
 
 Package: walinuxagent
-Architecture: i386 amd64
+Architecture: amd64 i386
 Pre-Depends: walinuxagent-data-saver (= ${binary:Version})
-Depends: python (>= 2.4),
-         openssl (>=1.0),
-         openssh-server (>=1:5.9p1),
-         passwd (>=4.1.4.2),
-         util-linux (>=2.0),
+Depends: cloud-init (>=0.7.3~bzr826-0ubuntu2),
          linux-image-extra-virtual,
+         openssh-server (>=1:5.9p1),
+         openssl (>=1.0),
+         passwd (>=4.1.4.2),
+         python (>= 2.4),
+         util-linux (>=2.0),
          ${misc:Depends},
          ${python:Depends}
 Conflicts: network-manager
@@ -26,7 +27,7 @@ Description: Windows Azure Linux Agent
  disk images that are built to run in the Windows Azure environment.
 
 Package: walinuxagent-data-saver
-Architecture: i386 amd64
+Architecture: amd64 i386
 Depends: ${misc:Depends}
 Description: Helper package which ensures safe upgrade for walinuxagent
  Early versions of walinuxagent contained a bug the deleted configuration and

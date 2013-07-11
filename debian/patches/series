@@ -1,1 +1,2 @@
-000_no_udev_rule_removal.patch
+no_udev_rule_removal.patch
+config_for_cloud-init.patch

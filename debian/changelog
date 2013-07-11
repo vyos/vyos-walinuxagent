@@ -1,3 +1,21 @@
+walinuxagent (1.3.2-0ubuntu3) saucy; urgency=low
+
+  [ Ben Howard ]
+  * debian/patches/config_for_cloud-init.patch:
+    Modified configuration to disable provisioning functions.
+    walinuxagent for Ubuntu should now be used with Cloud-init.
+  * debian/postinst: Don't overwrite existing /etc/waagent.conf agent
+    configuration on install or upgrade.
+  * debian/upstart: start later in boot, avoiding race conditions
+    with cloud-init.
+
+  [ Scott Moser ]
+  * debian: wrap and sort directory
+  * debian/patches/no_udev_rule_removal.patch: remove 000 prefix in file
+    name. No need for numbering in filenames when we have patches/series.
+
+ -- Scott Moser <smoser@ubuntu.com>  Thu, 11 Jul 2013 17:31:05 -0400
+
 walinuxagent (1.3.2-0ubuntu2) saucy; urgency=low
 
   * Added logic to prevent udev rules.d movement (LP: #1188753)
