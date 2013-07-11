@@ -2222,6 +2222,7 @@ exit 0
 WaagentConf = """\
 #
 # Windows Azure Linux Agent Configuration
+# This configuration is modified to work with Cloud-init
 #
 
 Role.StateConsumer=None                 # Specified program is invoked with "Ready" or "Shutdown".
@@ -2230,15 +2231,15 @@ Role.StateConsumer=None                 # Specified program is invoked with "Rea
 Role.ConfigurationConsumer=None         # Specified program is invoked with XML file argument specifying role configuration.
 Role.TopologyConsumer=None              # Specified program is invoked with XML file argument specifying role topology.
 
-Provisioning.Enabled=y                  #
-Provisioning.DeleteRootPassword=y       # Password authentication for root account will be unavailable.
-Provisioning.RegenerateSshHostKeyPair=y # Generate fresh host key pair.
+Provisioning.Enabled=n                  #
+Provisioning.DeleteRootPassword=n       # Password authentication for root account will be unavailable.
+Provisioning.RegenerateSshHostKeyPair=n # Generate fresh host key pair.
 Provisioning.SshHostKeyPairType=rsa     # Supported values are "rsa", "dsa" and "ecdsa".
-Provisioning.MonitorHostName=y          # Monitor host name changes and publish changes via DHCP requests.
+Provisioning.MonitorHostName=n          # Monitor host name changes and publish changes via DHCP requests.
 
 ResourceDisk.Format=y                   # Format if unformatted. If 'n', resource disk will not be mounted.
 ResourceDisk.Filesystem=ext4            #
-ResourceDisk.MountPoint=/mnt/resource   #
+ResourceDisk.MountPoint=/mnt            #
 ResourceDisk.EnableSwap=n               # Create and use swapfile on resource disk.
 ResourceDisk.SwapSizeMB=0               # Size of the swapfile.
 
