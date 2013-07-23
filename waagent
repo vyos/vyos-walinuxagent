@@ -456,7 +456,7 @@ def NoLog(message):
 
 def LogIfVerbose(message):
     if Verbose == True:
-        LogFileWithPrefix('',message)
+        LogWithPrefix('',message)
 
 def LogWithPrefixIfVerbose(prefix, message):
     if Verbose == True:
@@ -2423,7 +2423,7 @@ def DeleteRootPassword():
     ReplaceFileContentsAtomic(filepath, "root:*LOCK*:14600::::::\n" + "\n".join(filter(lambda a: not
         a.startswith("root:"),
         GetFileContents(filepath).split('\n'))))
-    os.chmod(filepath, 0000)
+    os.chmod(filepath, 0640)
     if IsRedHat():
         Run("chcon system_u:object_r:shadow_t:s0 " + filepath)
     Log("Root password deleted.")
