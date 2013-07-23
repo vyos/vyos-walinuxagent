@@ -456,7 +456,7 @@ def NoLog(message):
 
 def LogIfVerbose(message):
     if Verbose == True:
-        LogFileWithPrefix('',message)
+        LogWithPrefix('',message)
 
 def LogWithPrefixIfVerbose(prefix, message):
     if Verbose == True:
