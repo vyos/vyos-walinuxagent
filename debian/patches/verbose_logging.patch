@@ -1,0 +1,16 @@
+Description: Use the proper log faculty for verbose logging (LP: #1193404).
+Bug: https://bugs.launchpad.net/ubuntu/+source/walinuxagent/+bug/1193404
+Author: Ben Howard
+Last-Update: 2013-07-23
+
+--- a/waagent
++++ b/waagent
+@@ -456,7 +456,7 @@ def NoLog(message):
+ 
+ def LogIfVerbose(message):
+     if Verbose == True:
+-        LogFileWithPrefix('',message)
++        LogWithPrefix('',message)
+ 
+ def LogWithPrefixIfVerbose(prefix, message):
+     if Verbose == True:
