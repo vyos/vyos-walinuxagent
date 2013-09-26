@@ -1,0 +1,16 @@
+Description: Disable disk formatting/mounting of ephemeral storage
+ Disabling this code segment as redundant with Cloud Init
+Bug: https://bugs.launchpad.net/ubuntu/+bug/1231490
+Author: Ben Howard
+Last-Update: 2013-09-26
+--- a/waagent
++++ b/waagent
+@@ -2237,7 +2237,7 @@ Provisioning.RegenerateSshHostKeyPair=n
+ Provisioning.SshHostKeyPairType=rsa     # Supported values are "rsa", "dsa" and "ecdsa".
+ Provisioning.MonitorHostName=n          # Monitor host name changes and publish changes via DHCP requests.
+ 
+-ResourceDisk.Format=y                   # Format if unformatted. If 'n', resource disk will not be mounted.
++ResourceDisk.Format=n                   # Format if unformatted. If 'n', resource disk will not be mounted.
+ ResourceDisk.Filesystem=ext4            #
+ ResourceDisk.MountPoint=/mnt            #
+ ResourceDisk.EnableSwap=n               # Create and use swapfile on resource disk.
