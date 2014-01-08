@@ -4,7 +4,7 @@ Priority: extra
 Maintainer: Ben Howard <ben.howard@ubuntu.com>
 XSBC-Original-Maintainer: Microsoft Corporation <walinuxagent@microsoft.com>
 Build-Depends: debhelper (>= 8), python-all
-Standards-Version: 3.9.3
+Standards-Version: 3.9.4
 XS-Python-Version: all
 Homepage: http://go.microsoft.com/fwlink/?LinkId=250998
 
@@ -30,7 +30,7 @@ Package: walinuxagent-data-saver
 Architecture: amd64 i386
 Depends: ${misc:Depends}
 Description: Helper package which ensures safe upgrade for walinuxagent
- Early versions of walinuxagent contained a bug the deleted configuration and
- data on reconfiguration or upgrade.
+ Early versions of walinuxagent contained a bug that caused the walinuxagent
+ and sudo configurations to be removed on reconfiguration or upgrade.
  .
  This package is used to ensure safe upgrades.
