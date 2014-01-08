@@ -1,7 +1,7 @@
 #!/usr/bin/make -f
 
 DEB_VERSION=$(shell dpkg-parsechangelog | sed -rne 's,^Version: ([^-]+).*,\1,p')
-ORIG_SRC=https://github.com/Windows-Azure/WALinuxAgent
+ORIG_SRC=https://github.com/WindowsAzure/WALinuxAgent
 
 get-packaged-orig-source:
 	git clone --separate-git-dir=.git \
