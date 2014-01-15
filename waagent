@@ -2237,7 +2237,7 @@ Provisioning.RegenerateSshHostKeyPair=n # Generate fresh host key pair.
 Provisioning.SshHostKeyPairType=rsa     # Supported values are "rsa", "dsa" and "ecdsa".
 Provisioning.MonitorHostName=n          # Monitor host name changes and publish changes via DHCP requests.
 
-ResourceDisk.Format=y                   # Format if unformatted. If 'n', resource disk will not be mounted.
+ResourceDisk.Format=n                   # Format if unformatted. If 'n', resource disk will not be mounted.
 ResourceDisk.Filesystem=ext4            #
 ResourceDisk.MountPoint=/mnt            #
 ResourceDisk.EnableSwap=n               # Create and use swapfile on resource disk.
