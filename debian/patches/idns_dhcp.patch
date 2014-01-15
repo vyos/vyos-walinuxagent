@@ -1,0 +1,44 @@
+Description: Don't send hostname in dhcp
+ On cloud-init provisioned hosts, the hostname is not put in
+ the dhcp client configuration. If a person runs '--deprovision', takes a
+ snapshot and attempts to start the snapshot, the host will fail to
+ register itself with iDNS.
+ .
+ Cherry picked fix from upstream
+ https://github.com/WindowsAzure/WALinuxAgent/commit/375f1ede38fd323c2560e7e21ba99ac50bc66acd
+Bug: https://bugs.launchpad.net/ubuntu/+bug/1268050
+Author: Ben Howard
+Last-Update: 2013-09-26
+--- a/waagent
++++ b/waagent
+@@ -211,6 +211,21 @@
+             return line
+     return None
+ 
++def FindStringInFile(fname,matchs):
++    """
++    Return match object if found in file.
++    """
++    try:
++        ms=re.compile(matchs)
++        for l in (open(fname,'r')).readlines():
++            m=re.search(ms,l)
++            if m:
++                return m
++    except:
++        raise
++
++    return None
++
+ def Run(cmd,chk_err=True):
+     retcode,out=RunGetOutput(cmd,chk_err)
+     return retcode
+@@ -1435,7 +1450,7 @@
+         SetFileContents("/etc/hostname", name)
+ 
+     for filepath in EtcDhcpClientConfFiles:
+-        if os.path.isfile(filepath):
++        if os.path.isfile(filepath) and FindStringInFile(filepath,r'^[^#]*?send\s*host-name.*?(<hostname>|gethostname[(,)])') == None :
+             ReplaceFileContentsAtomic(filepath, "send host-name \"" + name + "\";\n"
+                 + "\n".join(filter(lambda a: not a.startswith("send host-name"), GetFileContents(filepath).split('\n'))))
+ 

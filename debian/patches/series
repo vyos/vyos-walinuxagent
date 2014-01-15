@@ -3,3 +3,4 @@ config_for_cloud-init.patch
 verbose_logging.patch
 shadow_permissions.patch
 disable_disk_formating.patch
+idns_dhcp.patch
