@@ -1,6 +1,4 @@
-no_udev_rule_removal.patch
-config_for_cloud-init.patch
-verbose_logging.patch
-shadow_permissions.patch
-disable_disk_formating.patch
-idns_dhcp.patch
+disable-udev-rules.patch
+disable_provisioning.patch
+fixup_setup_file.patch
+cloud-init-default-cfg.patch

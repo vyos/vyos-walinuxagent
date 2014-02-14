@@ -1,1 +1,1 @@
-waagent usr/sbin
+config/91_walinuxagent.cfg etc/cloud/cloud.cfg.d
