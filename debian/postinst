@@ -1,0 +1,9 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = "configure" ]; then
+    # fix for LP: 1268050
+    sed -i 's|^send host-name "<hostname>";|send host-name = gethostname();|g' /etc/dhcp/dhclient.conf
+fi
+
+#DEBHELPER#
