@@ -5,7 +5,7 @@ Author: Ben Howard
 Last-Update: 2013-07-11
 --- a/waagent
 +++ b/waagent
-@@ -87,8 +87,7 @@
+@@ -90,8 +90,7 @@
  VMM_STARTUP_SCRIPT_NAME='install'
  VMM_CONFIG_FILE_NAME='linuxosconfiguration.xml'
  global RulesFiles

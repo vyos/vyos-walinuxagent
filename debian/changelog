@@ -1,3 +1,10 @@
+walinuxagent (2.0.4-0ubuntu1) trusty; urgency=medium
+
+  * Update to latest upstream version 2.0.4 (LP: #1304023).
+    - Includes ability for agent injection.
+
+ -- Ben Howard <ben.howard@ubuntu.com>  Mon, 07 Apr 2014 16:48:16 -0600
+
 walinuxagent (2.0.3-0ubuntu2) trusty; urgency=low
 
   * Change /etc/dhcp/dhclient.conf 'send host-name' during post-inst to
