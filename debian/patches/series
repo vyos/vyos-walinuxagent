@@ -2,3 +2,4 @@ disable-udev-rules.patch
 disable_provisioning.patch
 fixup_setup_file.patch
 cloud-init-default-cfg.patch
+sshd_config_newline_fix.patch
