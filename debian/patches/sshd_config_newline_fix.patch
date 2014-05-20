@@ -11,7 +11,7 @@ Bug-Ubuntu: https://bugs.launchpad.net/bugs/1305418
 
 --- a/waagent
 +++ b/waagent
-@@ -3353,7 +3353,7 @@
+@@ -3719,7 +3719,7 @@
              # Disable RFC 4252 and RFC 4256 authentication schemes.
              ReplaceFileContentsAtomic(filepath, "\n".join(filter(lambda a: not
                  (a.startswith("PasswordAuthentication") or a.startswith("ChallengeResponseAuthentication")),

@@ -1,3 +1,19 @@
+walinuxagent (2.0.5-0ubuntu1) utopic; urgency=medium
+
+  * New upstream release (LP: #1321024).
+    - Multiple fixes for extension handler framework
+      - New logging support
+      - Add state handling for each extension
+      - Properly handle non-JSON extensions
+      -  Several other bugfixes
+    - Replace platform.* calls with DistInfo() function
+    - EnvMonitor - Set SCSI I/O timeout for all attached disks
+  * Packaging changes
+    - Rebased Ubuntu packaging patches from 2.0.4.
+    - Updated Debian standards from 3.9.4 to 3.9.5.
+
+ -- Ben Howard <ben.howard@ubuntu.com>  Tue, 20 May 2014 08:26:50 -0600
+
 walinuxagent (2.0.4-0ubuntu2) trusty; urgency=low
 
   * Fix for broken sshd configuration (LP: #1305418)
