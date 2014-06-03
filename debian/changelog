@@ -1,3 +1,9 @@
+walinuxagent (2.0.5-0ubuntu3) utopic; urgency=medium
+
+  * Restrict builds to amd64 only (LP: #1326018).
+
+ -- Ben Howard <ben.howard@ubuntu.com>  Tue, 03 Jun 2014 09:21:20 -0600
+
 walinuxagent (2.0.5-0ubuntu1) utopic; urgency=medium
 
   * New upstream release (LP: #1321024).

@@ -9,7 +9,7 @@ XS-Python-Version: all
 Homepage: http://go.microsoft.com/fwlink/?LinkId=250998
 
 Package: walinuxagent
-Architecture: amd64 i386
+Architecture: amd64
 Depends: cloud-init (>=0.7.3~bzr826-0ubuntu2),
          linux-image-extra-virtual,
          openssh-server (>=1:5.9p1),
