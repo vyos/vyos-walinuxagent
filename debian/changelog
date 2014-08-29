@@ -1,3 +1,15 @@
+walinuxagent (2.0.8-0ubuntu1) utopic; urgency=medium
+
+  * New upstream release (LP: #1356479).
+    - Fixed issue of reporting SSH keys to fabric
+      - wait for Cloud-init to provision the host keys
+    - Multiple fixes for extension handlers
+      - capture output of subprocess, prevent subprocess failure
+      - prevent fabric from continuously querying host if no extensions
+        are installed.
+
+ -- Ben Howard <ben.howard@ubuntu.com>  Fri, 29 Aug 2014 10:11:12 -0600
+
 walinuxagent (2.0.5-0ubuntu3) utopic; urgency=medium
 
   * Restrict builds to amd64 only (LP: #1326018).
