@@ -1,1 +1,2 @@
 config/91_walinuxagent.cfg etc/cloud/cloud.cfg.d
+debian/ephemeral-disk-warning.conf etc/init

@@ -1,3 +1,9 @@
+walinuxagent (2.0.8-0ubuntu2) vivid; urgency=medium
+
+  * Add upstart job to add "readme" on Azure ephemeral disk (LP: #1382257).
+
+ -- Ben Howard <ben.howard@ubuntu.com>  Thu, 06 Nov 2014 16:33:42 -0700
+
 walinuxagent (2.0.8-0ubuntu1) utopic; urgency=medium
 
   * New upstream release (LP: #1356479).
