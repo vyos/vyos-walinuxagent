@@ -90,8 +90,7 @@ ExtensionChildren = []
 VMM_STARTUP_SCRIPT_NAME='install'
 VMM_CONFIG_FILE_NAME='linuxosconfiguration.xml'
 global RulesFiles
-RulesFiles = [ "/lib/udev/rules.d/75-persistent-net-generator.rules",
-               "/etc/udev/rules.d/70-persistent-net.rules" ]
+RulesFiles = []
 VarLibDhcpDirectories = ["/var/lib/dhclient", "/var/lib/dhcpcd", "/var/lib/dhcp"]
 EtcDhcpClientConfFiles = ["/etc/dhcp/dhclient.conf", "/etc/dhcp3/dhclient.conf"]
 global LibDir
