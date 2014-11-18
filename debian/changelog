@@ -1,3 +1,9 @@
+walinuxagent (2.0.8-0ubuntu4) vivid; urgency=medium
+
+  * Moved dependency of linux-image-extra-virtual to recommends.
+
+ -- Ben Howard <ben.howard@ubuntu.com>  Tue, 18 Nov 2014 05:40:07 -0700
+
 walinuxagent (2.0.8-0ubuntu3) vivid; urgency=medium
 
   * Changed startup ordering to on ephemeral disk warning as the warning
