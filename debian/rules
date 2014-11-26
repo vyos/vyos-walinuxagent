@@ -10,4 +10,4 @@ get-packaged-orig-source:
 		-o walinuxagent_$(DEB_VERSION).orig.tar.gz
 
 %:
-	dh $@ --with python2
+	dh $@ --with python2,systemd
