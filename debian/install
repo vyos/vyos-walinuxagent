@@ -1,2 +1,3 @@
 config/91_walinuxagent.cfg etc/cloud/cloud.cfg.d
 debian/ephemeral-disk-warning.conf etc/init
+debian/66-azure-storage.rules lib/udev/rules.d

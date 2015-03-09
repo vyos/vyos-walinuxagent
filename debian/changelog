@@ -1,3 +1,11 @@
+walinuxagent (2.0.8-0ubuntu7) vivid; urgency=medium
+
+  * Added /lib/udev/rules.d/66-azure-storage.rules: create symlinks for
+    /dev/disk/azure/{root,resource} to correctly identify disks
+    (LP: #1411582).
+
+ -- Ben Howard <ben.howard@ubuntu.com>  Mon, 09 Mar 2015 06:26:48 -0600
+
 walinuxagent (2.0.8-0ubuntu6) vivid; urgency=medium
 
   * Changed systemd unit file to allow for cloud-init to run first.
