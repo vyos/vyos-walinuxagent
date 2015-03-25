@@ -1,21 +1,6 @@
-Description: Disable provisioning
- On Ubuntu, provisioning requires cloud-init. We disable all the
- provisioning functions for the agent.
-Author: Ben Howard
-Last-Update: 2013-07-11
 --- a/config/waagent.conf
 +++ b/config/waagent.conf
-@@ -1,6 +1,9 @@
- #
- # Windows Azure Linux Agent Configuration
- #
-+# Ubuntu uses Cloud-init to provision on Windows Azure. This configuration
-+# file is used to ensure that cloud-init does the prep of the disk
-+#
- 
- # Specified program is invoked with the argument "Ready" when we report ready status
- # to the endpoint server.
-@@ -14,29 +17,29 @@
+@@ -14,30 +14,34 @@
  Role.TopologyConsumer=None
  
  # Enable instance creation
@@ -45,10 +30,14 @@ Last-Update: 2013-07-11
  # Typically ext3 or ext4. FreeBSD images should use 'ufs2' here.
  ResourceDisk.Filesystem=ext4
  
--# ount point for the resource disk
+ # Mount point for the resource disk
 -ResourceDisk.MountPoint=/mnt/resource
-+# Mount point for the resource disk
 +ResourceDisk.MountPoint=/mnt
  
++# NOTE: Ubuntu uses Cloud-init for disk-provisioning. This will
++# unless you disable Cloud-init disk provisioning. Please see
++# /usr/share/doc/walinuxagent/99-cloud-init-disable-diskprovisioning.conf
++#
  # Create and use swapfile on resource disk.
  ResourceDisk.EnableSwap=n
+ 

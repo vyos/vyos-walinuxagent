@@ -1,13 +1,1 @@
-[Unit]
-Description=Windows Azure Linux Agent
-After=network.target
-Wants=sshd.service sshd-keygen.service
-ConditionFileIsExecutable=/usr/sbin/waagent
-ConditionPathExists=/etc/waagent.conf
-
-[Service]
-Type=simple
-ExecStart=/usr/sbin/waagent -daemon
-
-[Install]
-WantedBy=multi-user.target
+../distro/systemd/walinuxagent.service

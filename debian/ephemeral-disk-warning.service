@@ -1,0 +1,16 @@
+[Unit]
+Description=
+After=cloud-final.service
+ConditionVirtualization=microsoft
+ConditionPathIsMountPoint=/mnt
+ConditionPathExists=/dev/disk/azure/resource-part1
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/ephemeral-disk-warning.sh
+RemainAfterExit=yes
+StandardOutput=journal+console
+
+[Install]
+WantedBy=multi-user.target
+
