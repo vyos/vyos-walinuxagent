@@ -1,11 +1,6 @@
-Description: Prevent the removal of udev rules by agent
- Agent violates packaging rules by modifying the files from another
- package. This patch makes the package compliant.
-Author: Ben Howard
-Last-Update: 2013-07-11
 --- a/waagent
 +++ b/waagent
-@@ -90,8 +90,7 @@
+@@ -92,8 +92,7 @@
  VMM_STARTUP_SCRIPT_NAME='install'
  VMM_CONFIG_FILE_NAME='linuxosconfiguration.xml'
  global RulesFiles

@@ -1,4 +1,6 @@
 #!/usr/bin/make -f
+INIT_SYSTEM ?= upstart,systemd
+export PYBUILD_INSTALL_ARGS=--init-system=$(INIT_SYSTEM)
 
 DEB_VERSION=$(shell dpkg-parsechangelog | sed -rne 's,^Version: ([^-]+).*,\1,p')
 ORIG_SRC=https://github.com/WindowsAzure/WALinuxAgent
@@ -6,6 +8,7 @@ ORIG_SRC=https://github.com/WindowsAzure/WALinuxAgent
 get-packaged-orig-source:
 	git clone --separate-git-dir=.git \
 		$(ORIG_SRC) orig_source
+	git checkout -b tags/$(DEB_VERSION)
 	git archive --format=tar.gz WALinuxAgent-$(DEB_VERSION) \
 		-o walinuxagent_$(DEB_VERSION).orig.tar.gz
 

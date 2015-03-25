@@ -1,3 +1,11 @@
+walinuxagent (2.0.12-0ubuntu1) vivid; urgency=medium
+
+  * New upstream release.
+  * Added debian/watch for easier maintenance.
+  * Fix regression of missing dataloss warning by adding systemd unit file.
+
+ -- Ben Howard <ben.howard@ubuntu.com>  Wed, 25 Mar 2015 11:04:05 -0600
+
 walinuxagent (2.0.8-0ubuntu7) vivid; urgency=medium
 
   * Added /lib/udev/rules.d/66-azure-storage.rules: create symlinks for
