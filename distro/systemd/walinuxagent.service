@@ -1,7 +1,7 @@
 [Unit]
 Description=Windows Azure Linux Agent
 After=network.target
-After=sshd.service
+Wants=sshd.service sshd-keygen.service
 ConditionFileIsExecutable=/usr/sbin/waagent
 ConditionPathExists=/etc/waagent.conf
 
