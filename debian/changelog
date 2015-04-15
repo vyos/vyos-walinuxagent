@@ -1,6 +1,13 @@
+walinuxagent (2.0.12-0ubuntu2) vivid; urgency=medium
+
+  * Fixed systemd unit file which caused SharedConfig.xml to be deleted by
+    Cloud-init (LP: #1444086).
+
+ -- Ben Howard <ben.howard@ubuntu.com>  Wed, 15 Apr 2015 10:59:38 -0600
+
 walinuxagent (2.0.12-0ubuntu1) vivid; urgency=medium
 
-  * New upstream release.
+  * New upstream release (LP: #1442392).
   * Added debian/watch for easier maintenance.
   * Fix regression of missing dataloss warning by adding systemd unit file.
 
