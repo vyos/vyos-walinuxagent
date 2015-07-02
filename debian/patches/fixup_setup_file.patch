@@ -1,6 +1,6 @@
 --- a/setup.py
 +++ b/setup.py
-@@ -52,7 +52,7 @@
+@@ -51,7 +51,7 @@
  
      def initialize_options(self):
          install.initialize_options(self)
