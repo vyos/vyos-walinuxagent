@@ -1,3 +1,10 @@
+walinuxagent (2.0.13-0ubuntu1) wily; urgency=medium
+
+  * New upstream release (LP: #1449369).
+  * Rebased patches for 2.0.12 onto 2.0.13.
+
+ -- Ben Howard <ben.howard@ubuntu.com>  Thu, 02 Jul 2015 15:14:26 -0600
+
 walinuxagent (2.0.12-0ubuntu2) vivid; urgency=medium
 
   * Fixed systemd unit file which caused SharedConfig.xml to be deleted by
