@@ -51,7 +51,7 @@ class InstallData(install):
 
     def initialize_options(self):
         install.initialize_options(self)
-        self.init_system = 'sysV'
+        self.init_system = 'upstart'
         self.lnx_distro = None
 
     def finalize_options(self):
