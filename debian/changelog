@@ -1,7 +1,18 @@
+walinuxagent (2.0.13-0ubuntu2) wily; urgency=medium
+
+  * Added missing udev rule for product-uuid.
+
+ -- Ben Howard <ben.howard@ubuntu.com>  Fri, 03 Jul 2015 10:47:27 -0600
+
 walinuxagent (2.0.13-0ubuntu1) wily; urgency=medium
 
   * New upstream release (LP: #1449369).
   * Rebased patches for 2.0.12 onto 2.0.13.
+  * Upstream fixes:
+    - Handle http 410 returned by host
+    - Add support for http proxy
+    - Add support to execute CustomData after provisioning
+    - Update service start/stop command for Ubuntu
 
  -- Ben Howard <ben.howard@ubuntu.com>  Thu, 02 Jul 2015 15:14:26 -0600
 
