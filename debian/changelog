@@ -1,3 +1,13 @@
+walinuxagent (2.0.14-0ubuntu1) wily; urgency=medium
+
+  * New upstream release.
+    - Rebased patches for 2.0.13 onto 2.0.14.
+    - Fix rdma config
+    - Fix page blob uploading for python 2.6
+    . Fix http request error handling
+
+ -- Ben Howard <ben@prongs>  Fri, 17 Jul 2015 14:24:20 -0600
+
 walinuxagent (2.0.13-0ubuntu2) wily; urgency=medium
 
   * Added missing udev rule for product-uuid.
