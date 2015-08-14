@@ -1,6 +1,4 @@
-fixup_setup_file.patch
 cloud-init-default-cfg.patch
-#disable_provisioning.patch
-disable-udev-rules.patch
-fix-waagent-service.patch
-disable_provisioning.patch
+start-after-cloudinit.patch
+disable-udev-rules-removal.patch
+disable-provisioning.patch

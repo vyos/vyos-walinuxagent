@@ -1,4 +1,3 @@
-config/99-azure-product-uuid.rules lib/udev/rules.d
 config/91_walinuxagent.cfg etc/cloud/cloud.cfg.d
 debian/ephemeral-disk-warning.service lib/systemd/system
 debian/ephemeral-disk-warning.conf etc/init

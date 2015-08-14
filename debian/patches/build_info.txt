@@ -1,4 +1,0 @@
-serial=20150629
-orig_prefix=trusty-server-cloudimg
-suite=trusty
-build_name=server

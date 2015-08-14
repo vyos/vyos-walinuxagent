@@ -1,1 +1,1 @@
-../distro/systemd/walinuxagent.service
+../init/ubuntu/walinuxagent.service
