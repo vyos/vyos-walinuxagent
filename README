@@ -87,23 +87,24 @@ Installation via your distribution's package repository is preferred.
 You can also customize your own RPM or DEB packages using the configuration
 files provided (see debian/README and rpm/README).
 
-If installing manually, waagent should be copied to /usr/sbin/waagent and
-installed by running:
+For more advanced installation options, such as installing to custom locations 
+or prefixes, you can use setuptools to install from source by running:
+   
+    #sudo python setup.py install --register-service
 
-    # sudo chmod 755 /usr/sbin/waagent
-    # sudo /usr/sbin/waagent -install -verbose
+You can view more installation options by running:
+
+    #sudo python setup.py install --help
 
 The agent's log file is kept at /var/log/waagent.log.
-
 
 UPGRADE
 
 Upgrading via your distribution's package repository is preferred.
 
-If upgrading manually, same with installation above, waagent should be copied 
-to /usr/sbin/waagent to override original file and installed by running:
+If upgrading manually, same with installation above by running:
 
-    # sudo chmod 755 /usr/sbin/waagent
+    #sudo python setup.py install -force
 
 Restart waagent service,for most of linux distributions:
 
@@ -127,10 +128,6 @@ Flags:
   -verbose: Increase verbosity of specified command
 
   -force: Skip interactive confirmation for some commands
-
-Options:
-
-  -conf=/path/to/file.conf: Specify configuration file to use instead of default one.
 
 Commands:
 
@@ -181,6 +178,7 @@ Commands:
   -daemon: Run waagent as a daemon to manage interaction with the platform.
    This argument is specified to waagent in the waagent init script.
 
+  -start: Run waagent as a background process
 
 CONFIGURATION
 
@@ -207,8 +205,6 @@ ResourceDisk.MountPoint=/mnt/resource
 ResourceDisk.EnableSwap=n
 ResourceDisk.SwapSizeMB=0
 LBProbeResponder=y
-Logs.File=/var/log/waagent.log
-Logs.Console=y
 Logs.Verbose=n
 OS.RootDeviceScsiTimeout=300
 OS.OpensslPath=None
@@ -343,23 +339,11 @@ Type: Boolean Default: y
 If set, waagent will respond to load balancer probes from the platform (if
 present).
 
-Logs.File:
-Type: String Default: /dev/stdout
-
-If set, logs are appended to this file (instead of stdout). Bundled
-config (config/waagent.conf) sets this to '/var/log/waagent.log'.
-
-Logs.Console:
-Type: Boolean Default: n
-
-If set, waagent also logs to serial console. Bundled config (config/waagent.conf)
-sets this to 'y'.
-
 Logs.Verbose:
 Type: Boolean Default: n
 
-If set, log verbosity is boosted. When waagent logs to file it can
-leverage the system logrotate functionality to rotate logs.
+If set, log verbosity is boosted. Waagent logs to /var/log/waagent.log and
+leverages the system logrotate functionality to rotate logs.
 
 OS.RootDeviceScsiTimeout:
 Type: Integer Default: 300

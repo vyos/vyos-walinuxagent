@@ -12,14 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+# Requires Python 2.4+ and Openssl 1.0+
+#
+# Implements parts of RFC 2131, 1541, 1497 and
+# http://msdn.microsoft.com/en-us/library/cc227282%28PROT.10%29.aspx
+# http://msdn.microsoft.com/en-us/library/cc227259%28PROT.13%29.aspx
 
-import imp
 import os
 import sys
 
-project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-waagent = imp.load_source('waagent', os.path.join(project_root, 'waagent'))
+test_root = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(test_root)
 sys.path.insert(0, project_root)
-
-waagent.LoggerInit('/dev/stdout', '/dev/null')
-

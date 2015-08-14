@@ -21,6 +21,8 @@
 
 import os
 import sys
+from functools import wraps
+from azurelinuxagent.utils.osutil import OSUTIL
 
 parent = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(parent)
@@ -30,9 +32,10 @@ def simple_file_grep(file_path, search_str):
          if search_str in line:
                 return line
 
-def Mockup(target, name, mock):
-    def Decorator(func):
-        def Wrapper(*args, **kwargs):
+def mock(target, name, mock):
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
             origin = getattr(target, name)
             setattr(target, name, mock)
             try:
@@ -42,10 +45,10 @@ def Mockup(target, name, mock):
             finally:
                 setattr(target, name, origin)
             return result
-        return Wrapper
-    return Decorator
+        return wrapper
+    return decorator
 
-class MockFunc():
+class MockFunc(object):
     def __init__(self, name='', retval=None):
         self.name = name
         self.retval = retval
@@ -56,6 +59,7 @@ class MockFunc():
         self.kwargs = kwargs
         return self.retval
 
-def Dummy():
-    pass
 
+#Mock osutil so that the test of other part will be os unrelated
+OSUTIL.get_lib_dir = MockFunc(retval='/tmp')
+OSUTIL.get_ext_log_dir = MockFunc(retval='/tmp/log')
