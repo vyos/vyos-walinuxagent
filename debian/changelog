@@ -1,3 +1,9 @@
+walinuxagent (2.1.1-0ubuntu2) wily; urgency=medium
+
+  * Add support for upstart or systemd (LP: #1505001).
+
+ -- Ben Howard <ben.howard@ubuntu.com>  Fri, 09 Oct 2015 13:23:39 -0600
+
 walinuxagent (2.1.1-0ubuntu1) wily; urgency=medium
 
   * New upstream release for Ubuntu.
