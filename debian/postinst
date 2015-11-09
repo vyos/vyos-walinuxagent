@@ -4,6 +4,11 @@ set -e
 if [ "$1" = "configure" ]; then
     # fix for LP: 1268050
     sed -i 's|^send host-name "<hostname>";|send host-name = gethostname();|g' /etc/dhcp/dhclient.conf
+
+    # Trigger update for initramfs (LP: #1514485).
+    [ -x /usr/sbin/update-initramfs ] && update-initramfs -u
+    [ -x /etc/kernel/postinst.d/dracut ] && /etc/kernel/postinst.d/dracut $(uname -r)
+
 fi
 
 #DEBHELPER#
