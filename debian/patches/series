@@ -2,3 +2,5 @@ cloud-init-default-cfg.patch
 start-after-cloudinit.patch
 disable-udev-rules-removal.patch
 disable-provisioning.patch
+disable_rhel_tests.patch
+disable_import_test.patch

@@ -1,3 +1,9 @@
+walinuxagent (2.1.1-0ubuntu5) xenial; urgency=medium
+
+  * Disable RH testing.
+
+ -- Ben Howard <ben.howard@ubuntu.com>  Mon, 09 Nov 2015 11:38:11 -0700
+
 walinuxagent (2.1.1-0ubuntu4) xenial; urgency=medium
 
   * Added d/azure-resource as initramfs hook (LP: #1514485).
