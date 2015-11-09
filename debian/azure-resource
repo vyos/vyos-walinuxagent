@@ -1,0 +1,22 @@
+#!/bin/sh
+
+PREREQ="udev"
+
+prereqs()
+{
+        echo "$PREREQ"
+}
+
+case $1 in
+prereqs)
+        prereqs
+        exit 0
+        ;;
+esac
+
+mkdir -p $DESTDIR/lib/udev/rules.d/
+if   [ -e /etc/udev/rules.d/66-azure-storage.rules ]; then
+    cp -pt "${DESTDIR}/lib/udev/rules.d" /etc/udev/rules.d/66-azure-storage.rules
+elif [ -e /lib/udev/rules.d/66-azure-storage.rules ]; then
+    cp -pt "${DESTDIR}/lib/udev/rules.d" /lib/udev/rules.d/66-azure-storage.rules
+fi
