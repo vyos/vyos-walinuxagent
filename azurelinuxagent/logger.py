@@ -20,10 +20,9 @@
 """
 Log utils
 """
-
+import os
 import sys
 from azurelinuxagent.future import text
-import azurelinuxagent.utils.textutil as textutil
 from datetime import datetime
 
 class Logger(object):
@@ -36,7 +35,7 @@ class Logger(object):
             self.appenders.extend(logger.appenders)
         self.prefix = prefix
 
-    def verbose(self, msg_format, *args):
+    def verb(self, msg_format, *args):
         self.log(LogLevel.VERBOSE, msg_format, *args)
 
     def info(self, msg_format, *args):
@@ -49,6 +48,9 @@ class Logger(object):
         self.log(LogLevel.ERROR, msg_format, *args)
 
     def log(self, level, msg_format, *args):
+        #if msg_format is not unicode convert it to unicode
+        if type(msg_format) is not text:
+            msg_format = text(msg_format, errors="backslashreplace")
         if len(args) > 0:
             msg = msg_format.format(*args)
         else:
@@ -60,7 +62,9 @@ class Logger(object):
                                                    msg)
         else:
             log_item = u"{0} {1} {2}\n".format(time, level_str, msg)
-        log_item = text(log_item.encode("ascii", "backslashreplace"), encoding='ascii')
+
+        log_item = text(log_item.encode('ascii', "backslashreplace"), 
+                        encoding="ascii")
         for appender in self.appenders:
             appender.write(level, log_item)
 
@@ -107,7 +111,6 @@ class StdoutAppender(object):
             except IOError:
                 pass
 
-
 #Initialize logger instance
 DEFAULT_LOGGER = Logger()
 
@@ -132,7 +135,7 @@ def add_logger_appender(appender_type, level=LogLevel.INFO, path=None):
     DEFAULT_LOGGER.add_appender(appender_type, level, path)
 
 def verb(msg_format, *args):
-    DEFAULT_LOGGER.verbose(msg_format, *args)
+    DEFAULT_LOGGER.verb(msg_format, *args)
 
 def info(msg_format, *args):
     DEFAULT_LOGGER.info(msg_format, *args)

@@ -51,8 +51,8 @@ ext_sample_json = {
         }]
     }
 }
-ext_sample = prot.Extension()
-prot.set_properties(ext_sample, ext_sample_json)
+ext_sample = prot.ExtHandler()
+prot.set_properties("extensions", ext_sample, ext_sample_json)
 
 pkd_list_sample_str={
     "versions": [{
@@ -67,8 +67,8 @@ pkd_list_sample_str={
          }]
     }]
 }
-pkg_list_sample = prot.ExtensionPackageList()
-prot.set_properties(pkg_list_sample, pkd_list_sample_str)
+pkg_list_sample = prot.ExtHandlerPackageList()
+prot.set_properties("packages", pkg_list_sample, pkd_list_sample_str)
 
 manifest_sample_str = {
     "handlerManifest":{
@@ -81,11 +81,50 @@ manifest_sample_str = {
 }
 manifest_sample = ext.HandlerManifest(manifest_sample_str)
 
+ext_status_sample="""
+[{
+    "version": 1.0,
+    "timestampUTC": "2015-11-12T06:59:48Z",
+    "status": {
+        "name": "<Handler workload name>",
+        "operation": "<name of the operation being performed>",
+        "configurationAppliedTime": "2015-11-12T06:59:48Z",
+        "status": "error",
+        "code": 0,
+        "formattedMessage": {
+            "lang": "en-US",
+            "message": "formatted user message"
+        },
+        "substatus": [{
+            "name": "<Handler workload subcomponent name>",
+            "status": "error",
+            "code": 0 ,
+            "formattedMessage": {
+                "lang": "lang[-locale]",
+                "message": "formatted user message"
+            }
+        },{
+            "status": "error"
+        }]
+    }
+}]
+"""
+
+ext_status_sample_min="""
+[{
+    "version": 1.0,
+    "timestampUTC": "2015-11-12T06:59:48Z",
+    "status": {
+        "status": "error"
+    }
+}]
+"""
+
 def mock_load_manifest(self):
     return manifest_sample
 
 mock_launch_command = MockFunc()
-mock_set_handler_status = MockFunc()
+mock_set_state = MockFunc()
 
 def mock_download(self):
     fileutil.mkdir(self.get_base_dir())
@@ -106,14 +145,16 @@ class TestExtensions(unittest.TestCase):
         self.assertEqual('2.1', test_ext)
 
     def test_getters(self):
-        test_ext = ext.ExtensionInstance(ext_sample, pkg_list_sample, 
-                                        ext_sample.properties.version, False)
+        test_ext = ext.ExtHandlerInstance(ext_sample, pkg_list_sample, 
+                                          ext_sample.properties.version, False)
         self.assertEqual("/tmp/TestExt-2.0", test_ext.get_base_dir())
         self.assertEqual("/tmp/TestExt-2.0/status", test_ext.get_status_dir())
         self.assertEqual("/tmp/TestExt-2.0/status/0.status", 
                          test_ext.get_status_file())
-        self.assertEqual("/tmp/TestExt-2.0/config/HandlerState", 
+        self.assertEqual("/tmp/handler_state/TestExt-2.0/0.state", 
                          test_ext.get_handler_state_file())
+        self.assertEqual("/tmp/handler_state/TestExt-2.0/0.error", 
+                         test_ext.get_handler_state_err_file())
         self.assertEqual("/tmp/TestExt-2.0/config", test_ext.get_conf_dir())
         self.assertEqual("/tmp/TestExt-2.0/config/0.settings", 
                          test_ext.get_settings_file())
@@ -125,53 +166,57 @@ class TestExtensions(unittest.TestCase):
                          test_ext.get_env_file())
         self.assertEqual("/tmp/log/TestExt/2.0", test_ext.get_log_dir())
 
-        test_ext = ext.ExtensionInstance(ext_sample, pkg_list_sample, "2.1", False)
+        test_ext = ext.ExtHandlerInstance(ext_sample, pkg_list_sample, 
+                                          "2.1", False)
         self.assertEqual("/tmp/TestExt-2.1", test_ext.get_base_dir())
         self.assertEqual("2.1", test_ext.get_target_version())
    
-    @mock(ext.ExtensionInstance, 'load_manifest', mock_load_manifest)
-    @mock(ext.ExtensionInstance, 'launch_command', mock_launch_command)
-    @mock(ext.ExtensionInstance, 'set_handler_status', mock_set_handler_status)
+    @mock(ext.ExtHandlerInstance, 'load_manifest', mock_load_manifest)
+    @mock(ext.ExtHandlerInstance, 'launch_command', mock_launch_command)
+    @mock(ext.ExtHandlerInstance, 'set_state', mock_set_state)
     def test_handle_uninstall(self):
         mock_launch_command.args = None
-        mock_set_handler_status.args = None
-        test_ext = ext.ExtensionInstance(ext_sample, pkg_list_sample, 
-                                        ext_sample.properties.version, False)
+        mock_set_state.args = None
+        test_ext = ext.ExtHandlerInstance(ext_sample, pkg_list_sample, 
+                                          ext_sample.properties.version, False)
+        if not os.path.isdir(test_ext.get_base_dir()):
+            os.makedirs(test_ext.get_base_dir())
         test_ext.handle_uninstall()
         self.assertEqual(None, mock_launch_command.args)
-        self.assertEqual(None, mock_set_handler_status.args)
-        self.assertEqual(None, test_ext.get_curr_op())
+        self.assertEqual(None, mock_set_state.args)
 
-        test_ext = ext.ExtensionInstance(ext_sample, pkg_list_sample, 
-                                        ext_sample.properties.version, True)
+        test_ext = ext.ExtHandlerInstance(ext_sample, pkg_list_sample, 
+                                          ext_sample.properties.version, True)
+        if not os.path.isdir(test_ext.get_base_dir()):
+            os.makedirs(test_ext.get_base_dir())
         test_ext.handle_uninstall()
-        self.assertEqual(manifest_sample.get_uninstall_command(), mock_launch_command.args[0])
-        self.assertEqual("UnInstall", test_ext.get_curr_op())
-        self.assertEqual("NotReady", mock_set_handler_status.args[0])
-
-    @mock(ext.ExtensionInstance, 'load_manifest', mock_load_manifest)
-    @mock(ext.ExtensionInstance, 'launch_command', mock_launch_command)
-    @mock(ext.ExtensionInstance, 'download', mock_download)
-    @mock(ext.ExtensionInstance, 'get_handler_status', MockFunc(retval="enabled"))
-    @mock(ext.ExtensionInstance, 'set_handler_status', mock_set_handler_status)
-    def test_handle(self):
+        self.assertEqual(manifest_sample.get_uninstall_command(), 
+                         mock_launch_command.args[0])
+    
+    @mock(ext.ExtHandlerInstance, 'upgrade', MockFunc())
+    @mock(ext.ExtHandlerInstance, 'enable', MockFunc())
+    @mock(ext.ExtHandlerInstance, 'download', MockFunc())
+    @mock(ext.ExtHandlerInstance, 'init_dir', MockFunc())
+    @mock(ext.ExtHandlerInstance, 'install', MockFunc())
+    def test_handle_enable(self):
         #Test enable
-        test_ext = ext.ExtensionInstance(ext_sample, pkg_list_sample, 
-                                        ext_sample.properties.version, False)
-        test_ext.init_logger()
-        self.assertEqual(1, len(test_ext.logger.appenders) - len(logger.DEFAULT_LOGGER.appenders))
-        test_ext.handle()
-        
+        test_ext = ext.ExtHandlerInstance(ext_sample, pkg_list_sample, 
+                                          ext_sample.properties.version, False)
+        test_ext.handle_enable()
+     
         #Test upgrade 
-        test_ext = ext.ExtensionInstance(ext_sample, pkg_list_sample, 
-                                        ext_sample.properties.version, False)
-        test_ext.init_logger()
-        self.assertEqual(1, len(test_ext.logger.appenders) - len(logger.DEFAULT_LOGGER.appenders))
-        test_ext.handle()
+        test_ext = ext.ExtHandlerInstance(ext_sample, pkg_list_sample, 
+                                          "2.0" , True)
+        test_ext.handle_enable()
 
     def test_status_convert(self):
-        ext_status = json.loads('[{"status": {"status": "success", "formattedMessage": {"lang": "en-US", "message": "Script is finished"}, "operation": "Enable", "code": "0", "name": "Microsoft.OSTCExtensions.CustomScriptForLinux"}, "version": "1.0", "timestampUTC": "2015-06-27T08:34:50Z"}]')
-        ext.ext_status_to_v2(ext_status[0], 0)
+        data = json.loads(ext_status_sample)
+        ext_status = prot.ExtensionStatus()
+        ext.parse_ext_status(ext_status, data)
+
+        data = json.loads(ext_status_sample_min)
+        ext_status = prot.ExtensionStatus()
+        ext.parse_ext_status(ext_status, data)
 
 
 if __name__ == '__main__':
