@@ -44,6 +44,9 @@ class Ubuntu14xOSUtil(DefaultOSUtil):
     def start_agent_service(self):
         return shellutil.run("service walinuxagent start", chk_err=False)
 
+    def remove_rules_files(self, *args):
+        return
+
 class Ubuntu1204OSUtil(Ubuntu14xOSUtil):
     def __init__(self):
         super(Ubuntu1204OSUtil, self).__init__()
