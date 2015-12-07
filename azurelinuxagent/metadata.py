@@ -1,4 +1,4 @@
-# Windows Azure Linux Agent
+# Microsoft Azure Linux Agent
 #
 # Copyright 2014 Microsoft Corporation
 #
@@ -21,6 +21,7 @@ import os
 import re
 import platform
 import sys
+import azurelinuxagent.utils.fileutil as fileutil
 from azurelinuxagent.future import text
 
 def get_distro():
@@ -46,7 +47,7 @@ def get_distro():
 
 AGENT_NAME = "WALinuxAgent"
 AGENT_LONG_NAME = "Azure Linux Agent"
-AGENT_VERSION = '2.1.1'
+AGENT_VERSION = '2.1.2'
 AGENT_LONG_VERSION = "{0}-{1}".format(AGENT_NAME, AGENT_VERSION)
 AGENT_DESCRIPTION = """\
 The Azure Linux Agent supports the provisioning and running of Linux
@@ -70,24 +71,12 @@ PY_VERSION_MICRO = sys.version_info[2]
 Add this walk arround for detecting Snappy Ubuntu Core temporarily, until ubuntu 
 fixed this bug: https://bugs.launchpad.net/snappy/+bug/1481086
 """
-def which(program):
-    # Return path of program for execution if found in path
-    def is_exe(fpath):
-        return os.path.isfile(fpath) and os.access(fpath, os.X_OK)
-    _fpath, _ = os.path.split(program)
-    if _fpath:
-        if is_exe(program):
-            return program
-    else:
-        for path in os.environ.get("PATH", "").split(os.pathsep):
-            path = path.strip('"')
-            exe_file = os.path.join(path, program)
-            if is_exe(exe_file):
-                return exe_file
-    return None
-
 def is_snappy():
-       return which("snappy")
+    if os.path.exists("/etc/motd"):
+        motd = fileutil.read_file("/etc/motd")
+        if "snappy" in motd:
+            return True
+    return False
 
 if is_snappy():
     DISTRO_FULL_NAME = "Snappy Ubuntu Core"
