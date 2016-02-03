@@ -1,0 +1,2 @@
+# Enable verbose console logging on the serial console for Azure.
+KERNEL=="console", GROUP="syslog", MODE="0620"
