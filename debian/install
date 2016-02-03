@@ -3,4 +3,5 @@ debian/ephemeral-disk-warning.service lib/systemd/system
 debian/ephemeral-disk-warning.conf etc/init
 debian/ephemeral-disk-warning.sh usr/sbin
 debian/66-azure-storage.rules lib/udev/rules.d
+debian/67-azure-console.rules lib/udev/rules.d
 debian/azure-resource usr/share/initramfs-tools/hooks
