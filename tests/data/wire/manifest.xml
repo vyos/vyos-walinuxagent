@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PluginVersionManifest xmlns:i="http://www.w3.org/2001/XMLSchema-instance">
+    <Plugins>
+        <Plugin>
+            <Version>1.0</Version>
+            <Uris>
+                <Uri>http://foo.bar/zar/OSTCExtensions.ExampleHandlerLinux</Uri>
+            </Uris>
+        </Plugin>
+        <Plugin>
+            <Version>1.1</Version>
+            <Uris>
+                <Uri>http://foo.bar/zar/OSTCExtensions.ExampleHandlerLinux</Uri>
+            </Uris>
+        </Plugin>
+    </Plugins>
+</PluginVersionManifest>
+

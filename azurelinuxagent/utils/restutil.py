@@ -21,8 +21,9 @@ import time
 import platform
 import os
 import subprocess
-import azurelinuxagent.logger as logger
 import azurelinuxagent.conf as conf
+import azurelinuxagent.logger as logger
+from azurelinuxagent.exception import HttpError
 from azurelinuxagent.future import httpclient, urlparse
 
 """
@@ -30,9 +31,6 @@ REST api util functions
 """
 
 RETRY_WAITING_INTERVAL = 10
-
-class HttpError(Exception):
-    pass
 
 def _parse_url(url):
     o = urlparse(url)
@@ -51,8 +49,8 @@ def get_http_proxy():
     Get http_proxy and https_proxy from environment variables.
     Username and password is not supported now.
     """
-    host = conf.get("HttpProxy.Host", None)
-    port = conf.get("HttpProxy.Port", None)
+    host = conf.get_httpproxy_host()
+    port = conf.get_httpproxy_port()
     return (host, port)
 
 def _http_request(method, host, rel_uri, port=None, data=None, secure=False,
@@ -61,7 +59,7 @@ def _http_request(method, host, rel_uri, port=None, data=None, secure=False,
     if secure:
         port = 443 if port is None else port
         if proxy_host is not None and proxy_port is not None:
-            conn = httpclient.HTTPSConnection(proxy_host, proxy_port)
+            conn = httpclient.HTTPSConnection(proxy_host, proxy_port, timeout=10)
             conn.set_tunnel(host, port)
             #If proxy is used, full url is needed.
             url = "https://{0}:{1}{2}".format(host, port, rel_uri)
@@ -71,7 +69,7 @@ def _http_request(method, host, rel_uri, port=None, data=None, secure=False,
     else:
         port = 80 if port is None else port
         if proxy_host is not None and proxy_port is not None:
-            conn = httpclient.HTTPConnection(proxy_host, proxy_port)
+            conn = httpclient.HTTPConnection(proxy_host, proxy_port, timeout=10)
             #If proxy is used, full url is needed.
             url = "http://{0}:{1}{2}".format(host, port, rel_uri)
         else:
@@ -128,8 +126,12 @@ def http_request(method, url, data, headers=None, max_retry=3, chk_proxy=False):
         if retry < max_retry - 1:
             logger.info("Retry={0}, {1} {2}", retry, method, url)
             time.sleep(RETRY_WAITING_INTERVAL)
-
-    raise HttpError("HTTP Err: {0} {1}".format(method, url))
+    
+    if url is not None and len(url) > 100:
+        url_log = url[0: 100] #In case the url is too long
+    else:
+        url_log = url
+    raise HttpError("HTTP Err: {0} {1}".format(method, url_log))
 
 def http_get(url, headers=None, max_retry=3, chk_proxy=False):
     return http_request("GET", url, data=None, headers=headers, 

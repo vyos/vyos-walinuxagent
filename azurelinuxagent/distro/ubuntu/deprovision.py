@@ -33,6 +33,9 @@ def del_resolv():
 
 
 class UbuntuDeprovisionHandler(DeprovisionHandler):
+    def __init__(self, distro):
+        super(UbuntuDeprovisionHandler, self).__init__(distro)
+
     def setup(self, deluser):
         warnings, actions = super(UbuntuDeprovisionHandler, self).setup(deluser)
         warnings.append("WARNING! Nameserver configuration in "

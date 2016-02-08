@@ -5,8 +5,8 @@ ORIG_SRC=https://github.com/WindowsAzure/WALinuxAgent
 get-packaged-orig-source:
 	git clone --separate-git-dir=walinuxagent.checkout \
 		$(ORIG_SRC) orig_source
-	git checkout -b tags/$(DEB_VERSION)
-	git archive --format=tar.gz WALinuxAgent-$(DEB_VERSION) \
+	git checkout -b tags/v$(DEB_VERSION)
+	git archive --format=tar.gz v$(DEB_VERSION) \
 		-o walinuxagent_$(DEB_VERSION).orig.tar.gz
 	rm -rf walinuxagent.checkout
 	rm -rf orig_source

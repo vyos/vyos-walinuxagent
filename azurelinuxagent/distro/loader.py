@@ -16,31 +16,52 @@
 #
 
 import azurelinuxagent.logger as logger
-from azurelinuxagent.metadata import DISTRO_NAME
-import azurelinuxagent.distro.default.loader as default_loader
+from azurelinuxagent.utils.textutil import Version
+from azurelinuxagent.metadata import DISTRO_NAME, DISTRO_VERSION, \
+                                     DISTRO_FULL_NAME
+from azurelinuxagent.distro.default.distro import DefaultDistro
+from azurelinuxagent.distro.ubuntu.distro import UbuntuDistro, \
+                                                 Ubuntu14Distro, \
+                                                 Ubuntu12Distro, \
+                                                 UbuntuSnappyDistro
+from azurelinuxagent.distro.redhat.distro import RedhatDistro, Redhat6xDistro
+from azurelinuxagent.distro.coreos.distro import CoreOSDistro
+from azurelinuxagent.distro.suse.distro import SUSE11Distro, SUSEDistro
+from azurelinuxagent.distro.debian.distro import DebianDistro
 
-
-def get_distro_loader():
-    try:
-        logger.verb("Loading distro implemetation from: {0}", DISTRO_NAME)
-        pkg_name = "azurelinuxagent.distro.{0}.loader".format(DISTRO_NAME)
-        return __import__(pkg_name, fromlist="loader")
-    except (ImportError, ValueError):
-        logger.warn("Unable to load distro implemetation for {0}.", DISTRO_NAME)
+def get_distro(distro_name=DISTRO_NAME, distro_version=DISTRO_VERSION,
+               distro_full_name=DISTRO_FULL_NAME):
+    if distro_name == "ubuntu":
+        if Version(distro_version) == Version("12.04") or \
+           Version(distro_version) == Version("12.10"):
+            return Ubuntu12Distro()
+        elif Version(distro_version) == Version("14.04") or \
+             Version(distro_version) == Version("14.10"):
+            return Ubuntu14Distro()
+        elif distro_full_name == "Snappy Ubuntu Core":
+            return UbuntuSnappyDistro()
+        else:
+            return UbuntuDistro()
+    if distro_name == "coreos":
+        return CoreOSDistro()
+    if distro_name == "suse":
+        if distro_full_name=='SUSE Linux Enterprise Server' and \
+           Version(distro_version) < Version('12') or \
+           distro_full_name == 'openSUSE' and \
+           Version(distro_version) < Version('13.2'):
+            return SUSE11Distro()
+        else:
+            return SUSEDistro()
+    elif distro_name == "debian":
+        return DebianDistro()
+    elif distro_name == "redhat" or distro_name == "centos" or \
+            distro_name == "oracle":
+        if Version(distro_version) < Version("7"):
+            return Redhat6xDistro()
+        else:
+            return RedhatDistro()
+    else:
+        logger.warn("Unable to load distro implemetation for {0}.", distro_name)
         logger.warn("Use default distro implemetation instead.")
-        return default_loader
-
-DISTRO_LOADER = get_distro_loader()
-
-def get_osutil():
-    try:
-        return DISTRO_LOADER.get_osutil()
-    except AttributeError:
-        return default_loader.get_osutil()
-
-def get_handlers():
-    try:
-        return DISTRO_LOADER.get_handlers()
-    except AttributeError:
-        return default_loader.get_handlers()
+        return DefaultDistro()
 

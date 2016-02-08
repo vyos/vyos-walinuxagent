@@ -1,4 +1,3 @@
 cloud-init-default-cfg.patch
-disable-udev-rules-removal.patch
-disable_rhel_tests.patch
 disable_import_test.patch
+disable_udev_overrides.patch

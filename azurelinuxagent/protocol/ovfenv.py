@@ -17,59 +17,21 @@
 # Requires Python 2.4+ and Openssl 1.0+
 #
 """
-Copy and parse ovf-env.xml from provisiong ISO and local cache
+Copy and parse ovf-env.xml from provisioning ISO and local cache
 """
 import os
 import re
+import shutil
 import xml.dom.minidom as minidom
 import azurelinuxagent.logger as logger
-from azurelinuxagent.future import text
+from azurelinuxagent.exception import ProtocolError
+from azurelinuxagent.future import ustr
 import azurelinuxagent.utils.fileutil as fileutil
 from azurelinuxagent.utils.textutil import parse_doc, findall, find, findtext
-from azurelinuxagent.utils.osutil import OSUTIL, OSUtilError
-from azurelinuxagent.protocol import ProtocolError
 
-OVF_FILE_NAME = "ovf-env.xml"
 OVF_VERSION = "1.0"
 OVF_NAME_SPACE = "http://schemas.dmtf.org/ovf/environment/1"
 WA_NAME_SPACE = "http://schemas.microsoft.com/windowsazure"
-
-def get_ovf_env():
-    """
-    Load saved ovf-env.xml
-    """
-    ovf_file_path = os.path.join(OSUTIL.get_lib_dir(), OVF_FILE_NAME)
-    if os.path.isfile(ovf_file_path):
-        xml_text = fileutil.read_file(ovf_file_path)
-        return OvfEnv(xml_text)
-    else:
-        raise ProtocolError("ovf-env.xml is missing.")
-
-def copy_ovf_env():
-    """
-    Copy ovf env file from dvd to hard disk.
-    Remove password before save it to the disk
-    """
-    try:
-        OSUTIL.mount_dvd()
-        ovf_file_path_on_dvd = OSUTIL.get_ovf_env_file_path_on_dvd()
-        ovfxml = fileutil.read_file(ovf_file_path_on_dvd, remove_bom=True)
-        ovfenv = OvfEnv(ovfxml)
-        ovfxml = re.sub("<UserPassword>.*?<", "<UserPassword>*<", ovfxml)
-        ovf_file_path = os.path.join(OSUTIL.get_lib_dir(), OVF_FILE_NAME)
-        fileutil.write_file(ovf_file_path, ovfxml)
-    except IOError as e:
-        raise ProtocolError(text(e))
-    except OSUtilError as e:
-        raise ProtocolError(text(e))
-
-    try:
-        OSUTIL.umount_dvd()
-        OSUTIL.eject_dvd()
-    except OSUtilError as e:
-        logger.warn(text(e))
-
-    return ovfenv
 
 def _validate_ovf(val, msg):
     if val is None:

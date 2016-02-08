@@ -25,11 +25,15 @@ import struct
 import time
 import pwd
 import fcntl
+import base64
 import azurelinuxagent.logger as logger
-from azurelinuxagent.future import text
+import azurelinuxagent.conf as conf
+from azurelinuxagent.exception import OSUtilError
+from azurelinuxagent.future import ustr
 import azurelinuxagent.utils.fileutil as fileutil
 import azurelinuxagent.utils.shellutil as shellutil
 import azurelinuxagent.utils.textutil as textutil
+from azurelinuxagent.utils.cryptutil import CryptUtil
 
 __RULES_FILES__ = [ "/lib/udev/rules.d/75-persistent-net-generator.rules",
                     "/etc/udev/rules.d/70-persistent-net.rules" ]
@@ -40,44 +44,14 @@ for all distros. Each concrete distro classes could overwrite default behavior
 if needed.
 """
 
-class OSUtilError(Exception):
-    pass
-
 class DefaultOSUtil(object):
 
     def __init__(self):
-        self.lib_dir = "/var/lib/waagent"
-        self.ext_log_dir = "/var/log/azure"
-        self.dvd_mount_point = "/mnt/cdrom/secure"
-        self.ovf_env_file_path = "/mnt/cdrom/secure/ovf-env.xml"
-        self.agent_pid_file_path = "/var/run/waagent.pid"
-        self.passwd_file_path = "/etc/shadow"
-        self.home = '/home'
-        self.sshd_conf_file_path = '/etc/ssh/sshd_config'
-        self.openssl_cmd = '/usr/bin/openssl'
-        self.conf_file_path = '/etc/waagent.conf'
+        self.agent_conf_file_path = '/etc/waagent.conf'
         self.selinux=None
 
-    def get_lib_dir(self):
-        return self.lib_dir
-
-    def get_ext_log_dir(self):
-        return self.ext_log_dir
-
-    def get_dvd_mount_point(self):
-        return self.dvd_mount_point
-
-    def get_conf_file_path(self):
-        return self.conf_file_path
-
-    def get_ovf_env_file_path_on_dvd(self):
-        return self.ovf_env_file_path
-
-    def get_agent_pid_file_path(self):
-        return self.agent_pid_file_path
-
-    def get_openssl_cmd(self):
-        return self.openssl_cmd
+    def get_agent_conf_file_path(self):
+        return self.agent_conf_file_path
 
     def get_userentry(self, username):
         try:
@@ -86,6 +60,14 @@ class DefaultOSUtil(object):
             return None
 
     def is_sys_user(self, username):
+        """
+        Check whether use is a system user. 
+        If reset sys user is allowed in conf, return False
+        Otherwise, check whether UID is less than UID_MIN
+        """
+        if conf.get_allow_reset_sys_user():
+            return False
+
         userentry = self.get_userentry(username)
         uidmin = None
         try:
@@ -104,9 +86,13 @@ class DefaultOSUtil(object):
 
     def useradd(self, username, expiration=None):
         """
-        Update password and ssh key for user account.
-        New account will be created if not exists.
+        Create user account with 'username'
         """
+        userentry = self.get_userentry(username)
+        if userentry is not None:
+            logger.info("User {0} already exists, skip useradd", username)
+            return
+
         if expiration is not None:
             cmd = "useradd -m {0} -e {1}".format(username, expiration)
         else:
@@ -146,41 +132,20 @@ class DefaultOSUtil(object):
 
     def del_root_password(self):
         try:
-            passwd_content = fileutil.read_file(self.passwd_file_path)
+            passwd_file_path = conf.get_passwd_file_path()
+            passwd_content = fileutil.read_file(passwd_file_path)
             passwd = passwd_content.split('\n')
             new_passwd = [x for x in passwd if not x.startswith("root:")]
             new_passwd.insert(0, "root:*LOCK*:14600::::::")
-            fileutil.write_file(self.passwd_file_path, "\n".join(new_passwd))
+            fileutil.write_file(passwd_file_path, "\n".join(new_passwd))
         except IOError as e:
             raise OSUtilError("Failed to delete root password:{0}".format(e))
 
-    def get_home(self):
-        return self.home
-
-    def get_pubkey_from_prv(self, file_name):
-        cmd = "{0} rsa -in {1} -pubout 2>/dev/null".format(self.openssl_cmd,
-                                                           file_name)
-        pub = shellutil.run_get_output(cmd)[1]
-        return pub
-
-    def get_pubkey_from_crt(self, file_name):
-        cmd = "{0} x509 -in {1} -pubkey -noout".format(self.openssl_cmd,
-                                                       file_name)
-        pub = shellutil.run_get_output(cmd)[1]
-        return pub
-
     def _norm_path(self, filepath):
-        home = self.get_home()
+        home = conf.get_home_dir()
         # Expand HOME variable if present in path
         path = os.path.normpath(filepath.replace("$HOME", home))
         return path
-
-    def get_thumbprint_from_crt(self, file_name):
-        cmd="{0} x509 -in {1} -fingerprint -noout".format(self.openssl_cmd,
-                                                            file_name)
-        thumbprint = shellutil.run_get_output(cmd)[1]
-        thumbprint = thumbprint.rstrip().split('=')[1].replace(':', '').upper()
-        return thumbprint
 
     def deploy_ssh_keypair(self, username, keypair):
         """
@@ -190,13 +155,14 @@ class DefaultOSUtil(object):
         path = self._norm_path(path)
         dir_path = os.path.dirname(path)
         fileutil.mkdir(dir_path, mode=0o700, owner=username)
-        lib_dir = self.get_lib_dir()
+        lib_dir = conf.get_lib_dir()
         prv_path = os.path.join(lib_dir, thumbprint + '.prv')
         if not os.path.isfile(prv_path):
             raise OSUtilError("Can't find {0}.prv".format(thumbprint))
         shutil.copyfile(prv_path, path)
         pub_path = path + '.pub'
-        pub = self.get_pubkey_from_prv(prv_path)
+        crytputil = CryptUtil(conf.get_openssl_cmd())
+        pub = crytputil.get_pubkey_from_prv(prv_path)
         fileutil.write_file(pub_path, pub)
         self.set_selinux_context(pub_path, 'unconfined_u:object_r:ssh_home_t:s0')
         self.set_selinux_context(path, 'unconfined_u:object_r:ssh_home_t:s0')
@@ -204,8 +170,8 @@ class DefaultOSUtil(object):
         os.chmod(pub_path, 0o600)
 
     def openssl_to_openssh(self, input_file, output_file):
-        shellutil.run("ssh-keygen -i -m PKCS8 -f {0} >> {1}".format(input_file,
-                                                                    output_file))
+        cryptutil = CryptUtil(conf.get_openssl_cmd())
+        cryptutil.crt_to_ssh(input_file, output_file)
 
     def deploy_ssh_pubkey(self, username, pubkey):
         """
@@ -215,6 +181,8 @@ class DefaultOSUtil(object):
         if path is None:
             raise OSUtilError("Publich key path is None")
 
+        crytputil = CryptUtil(conf.get_openssl_cmd())
+
         path = self._norm_path(path)
         dir_path = os.path.dirname(path)
         fileutil.mkdir(dir_path, mode=0o700, owner=username)
@@ -223,12 +191,12 @@ class DefaultOSUtil(object):
                 raise OSUtilError("Bad public key: {0}".format(value))
             fileutil.write_file(path, value)
         elif thumbprint is not None:
-            lib_dir = self.get_lib_dir()
+            lib_dir = conf.get_lib_dir()
             crt_path = os.path.join(lib_dir, thumbprint + '.crt')
             if not os.path.isfile(crt_path):
                 raise OSUtilError("Can't find {0}.crt".format(thumbprint))
             pub_path = os.path.join(lib_dir, thumbprint + '.pub')
-            pub = self.get_pubkey_from_crt(crt_path)
+            pub = crytputil.get_pubkey_from_crt(crt_path)
             fileutil.write_file(pub_path, pub)
             self.set_selinux_context(pub_path, 
                                      'unconfined_u:object_r:ssh_home_t:s0')
@@ -280,23 +248,21 @@ class DefaultOSUtil(object):
         if self.is_selinux_system():
             return shellutil.run('chcon ' + con + ' ' + path)
 
-    def get_sshd_conf_file_path(self):
-        return self.sshd_conf_file_path
-
     def set_ssh_client_alive_interval(self):
-        conf_file_path = self.get_sshd_conf_file_path()
-        conf = fileutil.read_file(conf_file_path).split("\n")
-        textutil.set_ssh_config(conf, "ClientAliveInterval", "180")
-        fileutil.write_file(conf_file_path, '\n'.join(conf))
+        conf_file_path = conf.get_sshd_conf_file_path()
+        conf_file = fileutil.read_file(conf_file_path).split("\n")
+        textutil.set_ssh_config(conf_file, "ClientAliveInterval", "180")
+        fileutil.write_file(conf_file_path, '\n'.join(conf_file))
         logger.info("Configured SSH client probing to keep connections alive.")
 
     def conf_sshd(self, disable_password):
         option = "no" if disable_password else "yes"
-        conf_file_path = self.get_sshd_conf_file_path()
-        conf = fileutil.read_file(conf_file_path).split("\n")
-        textutil.set_ssh_config(conf, "PasswordAuthentication", option)
-        textutil.set_ssh_config(conf, "ChallengeResponseAuthentication", option)
-        fileutil.write_file(conf_file_path, "\n".join(conf))
+        conf_file_path = conf.get_sshd_conf_file_path()
+        conf_file = fileutil.read_file(conf_file_path).split("\n")
+        textutil.set_ssh_config(conf_file, "PasswordAuthentication", option)
+        textutil.set_ssh_config(conf_file, "ChallengeResponseAuthentication", 
+                                option)
+        fileutil.write_file(conf_file_path, "\n".join(conf_file))
         logger.info("Disabled SSH password-based authentication methods.")
 
 
@@ -309,7 +275,7 @@ class DefaultOSUtil(object):
 
     def mount_dvd(self, max_retry=6, chk_err=True):
         dvd = self.get_dvd_device()
-        mount_point = self.get_dvd_mount_point()
+        mount_point = conf.get_dvd_mount_point()
         mountlist = shellutil.run_get_output("mount")[1]
         existing = self.get_mount_point(mountlist, dvd)
         if existing is not None: #Already mounted
@@ -332,7 +298,7 @@ class DefaultOSUtil(object):
             raise OSUtilError("Failed to mount dvd.")
 
     def umount_dvd(self, chk_err=True):
-        mount_point = self.get_dvd_mount_point()
+        mount_point = conf.get_dvd_mount_point()
         retcode = self.umount(mount_point, chk_err=chk_err)
         if chk_err and retcode != 0:
             raise OSUtilError("Failed to umount dvd.")
@@ -386,17 +352,9 @@ class DefaultOSUtil(object):
         shellutil.run("iptables -I INPUT -p udp --dport 68 -j ACCEPT",
                       chk_err=False)
 
-    def gen_transport_cert(self):
-        """
-        Create ssl certificate for https communication with endpoint server.
-        """
-        cmd = ("{0} req -x509 -nodes -subj /CN=LinuxTransport -days 32768 "
-               "-newkey rsa:2048 -keyout TransportPrivate.pem "
-               "-out TransportCert.pem").format(self.openssl_cmd)
-        shellutil.run(cmd)
 
     def remove_rules_files(self, rules_files=__RULES_FILES__):
-        lib_dir = self.get_lib_dir()
+        lib_dir = conf.get_lib_dir()
         for src in rules_files:
             file_name = fileutil.base_name(src)
             dest = os.path.join(lib_dir, file_name)
@@ -407,7 +365,7 @@ class DefaultOSUtil(object):
                 shutil.move(src, dest)
 
     def restore_rules_files(self, rules_files=__RULES_FILES__):
-        lib_dir = self.get_lib_dir()
+        lib_dir = conf.get_lib_dir()
         for dest in rules_files:
             filename = fileutil.base_name(dest)
             src = os.path.join(lib_dir, filename)
@@ -603,7 +561,7 @@ class DefaultOSUtil(object):
         for vmbus in os.listdir(path):
             deviceid = fileutil.read_file(os.path.join(path, vmbus, "device_id"))
             guid = deviceid.lstrip('{').split('-')
-            if guid[0] == g0 and guid[1] == "000" + text(port_id):
+            if guid[0] == g0 and guid[1] == "000" + ustr(port_id):
                 for root, dirs, files in os.walk(path + vmbus):
                     if root.endswith("/block"):
                         device = dirs[0]
@@ -633,7 +591,7 @@ class DefaultOSUtil(object):
                 raise OSUtilError("Failed to remove sudoer: {0}".format(e))
 
     def decode_customdata(self, data):
-        return data
+        return base64.b64decode(data)
 
     def get_total_mem(self):
         cmd = "grep MemTotal /proc/meminfo |awk '{print $2}'"
@@ -649,4 +607,17 @@ class DefaultOSUtil(object):
             return int(ret[1])
         else:
             raise OSUtilError("Failed to get procerssor cores")
+    
+    def set_admin_access_to_ip(self, dest_ip):
+        #This allows root to access dest_ip
+        rm_old= "iptables -D OUTPUT -d {0} -j ACCEPT -m owner --uid-owner 0"
+        rule = "iptables -A OUTPUT -d {0} -j ACCEPT -m owner --uid-owner 0"
+        shellutil.run(rm_old.format(dest_ip), chk_err=False)
+        shellutil.run(rule.format(dest_ip))
+
+        #This blocks all other users to access dest_ip
+        rm_old = "iptables -D OUTPUT -d {0} -j DROP"
+        rule = "iptables -A OUTPUT -d {0} -j DROP"
+        shellutil.run(rm_old.format(dest_ip), chk_err=False)
+        shellutil.run(rule.format(dest_ip))
 
