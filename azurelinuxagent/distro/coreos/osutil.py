@@ -35,9 +35,9 @@ from azurelinuxagent.distro.default.osutil import DefaultOSUtil
 class CoreOSUtil(DefaultOSUtil):
     def __init__(self):
         super(CoreOSUtil, self).__init__()
+        self.agent_conf_file_path = '/usr/share/oem/waagent.conf'
         self.waagent_path='/usr/share/oem/bin/waagent'
         self.python_path='/usr/share/oem/python/bin'
-        self.conf_file_path = '/usr/share/oem/waagent.conf'
         if 'PATH' in os.environ:
             path = "{0}:{1}".format(os.environ['PATH'], self.python_path)
         else:
@@ -84,9 +84,6 @@ class CoreOSUtil(DefaultOSUtil):
     def get_dhcp_pid(self):
         ret= shellutil.run_get_output("pidof systemd-networkd")
         return ret[1] if ret[0] == 0 else None
-
-    def decode_customdata(self, data):
-        return base64.b64decode(data)
 
     def set_ssh_client_alive_interval(self):
         #In CoreOS, /etc/sshd_config is mount readonly. Skip the setting

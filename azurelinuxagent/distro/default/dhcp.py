@@ -19,61 +19,106 @@ import os
 import socket
 import array
 import time
+import threading
 import azurelinuxagent.logger as logger
-from azurelinuxagent.utils.osutil import OSUTIL
-from azurelinuxagent.exception import AgentNetworkError
+import azurelinuxagent.conf as conf
 import azurelinuxagent.utils.fileutil as fileutil
 import azurelinuxagent.utils.shellutil as shellutil
-from azurelinuxagent.utils.textutil import *
+from azurelinuxagent.utils.textutil import hex_dump, hex_dump2, hex_dump3, \
+                                           compare_bytes, str_to_ord, \
+                                           unpack_big_endian, \
+                                           unpack_little_endian, \
+                                           int_to_ip4_addr
+from azurelinuxagent.exception import DhcpError
 
-WIRE_SERVER_ADDR_FILE_NAME="WireServer"
 
 class DhcpHandler(object):
-    def __init__(self):
+    """
+    Azure use DHCP option 245 to pass endpoint ip to VMs.
+    """
+    def __init__(self, distro):
+        self.distro = distro
         self.endpoint = None
         self.gateway = None
         self.routes = None
 
+    def run(self):
+        """
+        Send dhcp request
+        Configure default gateway and routes
+        Save wire server endpoint if found
+        """
+        self.send_dhcp_req()
+        self.conf_routes()
+
     def wait_for_network(self):
-        ipv4 = OSUTIL.get_ip4_addr()
+        """
+        Wait for network stack to be initialized.
+        """
+        ipv4 = self.distro.osutil.get_ip4_addr()
         while ipv4 == '' or ipv4 == '0.0.0.0':
             logger.info("Waiting for network.")
             time.sleep(10)
-            OSUTIL.start_network()
-            ipv4 = OSUTIL.get_ip4_addr()
-
-    def probe(self):
-        logger.info("Send dhcp request")
-        self.wait_for_network()
-        mac_addr = OSUTIL.get_mac_addr()
-        req = build_dhcp_request(mac_addr)
-        resp = send_dhcp_request(req)
-        if resp is None:
-            logger.warn("Failed to detect wire server.")
-            return 
-        endpoint, gateway, routes = parse_dhcp_resp(resp)
-        self.endpoint = endpoint
-        logger.info("Wire server endpoint:{0}", endpoint)
-        logger.info("Gateway:{0}", gateway)
-        logger.info("Routes:{0}", routes)
-        if endpoint is not None:
-            path = os.path.join(OSUTIL.get_lib_dir(), WIRE_SERVER_ADDR_FILE_NAME)
-            fileutil.write_file(path, endpoint)
-        self.gateway = gateway
-        self.routes = routes
-        self.conf_routes()
-
-    def get_endpoint(self):
-        return self.endpoint
+            logger.info("Try to start network interface.")
+            self.distro.osutil.start_network()
+            ipv4 = self.distro.osutil.get_ip4_addr()
 
     def conf_routes(self):
         logger.info("Configure routes")
+        logger.info("Gateway:{0}", self.gateway)
+        logger.info("Routes:{0}", self.routes)
         #Add default gateway
         if self.gateway is not None:
-            OSUTIL.route_add(0 , 0, self.gateway)
+            self.distro.osutil.route_add(0 , 0, self.gateway)
         if self.routes is not None:
             for route in self.routes:
-                OSUTIL.route_add(route[0], route[1], route[2])
+                self.distro.osutil.route_add(route[0], route[1], route[2])
+
+    def _send_dhcp_req(self, request):    
+        __waiting_duration__ = [0, 10, 30, 60, 60]
+        for duration in __waiting_duration__:
+            try:
+                self.distro.osutil.allow_dhcp_broadcast()
+                response = socket_send(request)
+                validate_dhcp_resp(request, response)
+                return response
+            except DhcpError as e:
+                logger.warn("Failed to send DHCP request: {0}", e)
+            time.sleep(duration)
+        return None
+
+    def send_dhcp_req(self):
+        """
+        Build dhcp request with mac addr
+        Configure route to allow dhcp traffic
+        Stop dhcp service if necessary
+        """
+        logger.info("Send dhcp request")
+        mac_addr = self.distro.osutil.get_mac_addr()
+        req = build_dhcp_request(mac_addr)
+
+        # Temporary allow broadcast for dhcp. Remove the route when done.
+        missing_default_route = self.distro.osutil.is_missing_default_route()
+        ifname = self.distro.osutil.get_if_name()
+        if missing_default_route:
+            self.distro.osutil.set_route_for_dhcp_broadcast(ifname)
+
+        # In some distros, dhcp service needs to be shutdown before agent probe
+        # endpoint through dhcp.
+        if self.distro.osutil.is_dhcp_enabled():
+            self.distro.osutil.stop_dhcp_service()
+
+        resp = self._send_dhcp_req(req)
+        
+        if self.distro.osutil.is_dhcp_enabled():
+            self.distro.osutil.start_dhcp_service()
+
+        if missing_default_route:
+            self.distro.osutil.remove_route_for_dhcp_broadcast(ifname)
+
+        if resp is None:
+            raise DhcpError("Failed to receive dhcp response.")
+        self.endpoint, self.gateway, self.routes = parse_dhcp_resp(resp)
 
 def validate_dhcp_resp(request, response):
     bytes_recv = len(response)
@@ -92,28 +137,25 @@ def validate_dhcp_resp(request, response):
         logger.verb("Cookie not match:\nsend={0},\nreceive={1}",
                        hex_dump3(request, 0xEC, 4),
                        hex_dump3(response, 0xEC, 4))
-        raise AgentNetworkError("Cookie in dhcp respones "
-                                "doesn't match the request")
+        raise DhcpError("Cookie in dhcp respones doesn't match the request")
 
     if not compare_bytes(request, response, 4, 4):
         logger.verb("TransactionID not match:\nsend={0},\nreceive={1}",
                        hex_dump3(request, 4, 4),
                        hex_dump3(response, 4, 4))
-        raise AgentNetworkError("TransactionID in dhcp respones "
-                                "doesn't match the request")
+        raise DhcpError("TransactionID in dhcp respones "
+                            "doesn't match the request")
 
     if not compare_bytes(request, response, 0x1C, 6):
         logger.verb("Mac Address not match:\nsend={0},\nreceive={1}",
                        hex_dump3(request, 0x1C, 6),
                        hex_dump3(response, 0x1C, 6))
-        raise AgentNetworkError("Mac Addr in dhcp respones "
-                                "doesn't match the request")
+        raise DhcpError("Mac Addr in dhcp respones "
+                            "doesn't match the request")
 
 def parse_route(response, option, i, length, bytes_recv):
     # http://msdn.microsoft.com/en-us/library/cc227282%28PROT.10%29.aspx
-    logger.verb("Routes at offset: {0} with length:{1}",
-                   hex(i),
-                   hex(length))
+    logger.verb("Routes at offset: {0} with length:{1}", hex(i), hex(length))
     routes = []
     if length < 5:
         logger.error("Data too small for option:{0}", option)
@@ -169,9 +211,7 @@ def parse_dhcp_resp(response):
         if (i + 1) < bytes_recv:
             length = str_to_ord(response[i + 1])
         logger.verb("DHCP option {0} at offset:{1} with length:{2}",
-                       hex(option),
-                       hex(i),
-                       hex(length))
+                    hex(option), hex(i), hex(length))
         if option == 255:
             logger.verb("DHCP packet ended at offset:{0}", hex(i))
             break
@@ -179,68 +219,16 @@ def parse_dhcp_resp(response):
             routes = parse_route(response, option, i, length, bytes_recv)
         elif option == 3:
             gateway = parse_ip_addr(response, option, i, length, bytes_recv)
-            logger.verb("Default gateway:{0}, at {1}",
-                           gateway,
-                           hex(i))
+            logger.verb("Default gateway:{0}, at {1}", gateway, hex(i))
         elif option == 245:
             endpoint = parse_ip_addr(response, option, i, length, bytes_recv)
-            logger.verb("Azure wire protocol endpoint:{0}, at {1}",
-                           gateway,
-                           hex(i))
+            logger.verb("Azure wire protocol endpoint:{0}, at {1}", gateway,
+                        hex(i))
         else:
             logger.verb("Skipping DHCP option:{0} at {1} with length {2}",
-                           hex(option),
-                           hex(i),
-                           hex(length))
+                        hex(option), hex(i), hex(length))
         i += length + 2
     return endpoint, gateway, routes
-
-
-def allow_dhcp_broadcast(func):
-    """
-    Temporary allow broadcase for dhcp. Remove the route when done.
-    """
-    def wrapper(*args, **kwargs):
-        missing_default_route = OSUTIL.is_missing_default_route()
-        ifname = OSUTIL.get_if_name()
-        if missing_default_route:
-            OSUTIL.set_route_for_dhcp_broadcast(ifname)
-        result = func(*args, **kwargs)
-        if missing_default_route:
-            OSUTIL.remove_route_for_dhcp_broadcast(ifname)
-        return result
-    return wrapper
-
-def disable_dhcp_service(func):
-    """
-    In some distros, dhcp service needs to be shutdown before agent probe
-    endpoint through dhcp.
-    """
-    def wrapper(*args, **kwargs):
-        if OSUTIL.is_dhcp_enabled():
-            OSUTIL.stop_dhcp_service()
-            result = func(*args, **kwargs)
-            OSUTIL.start_dhcp_service()
-            return result
-        else:
-            return func(*args, **kwargs)
-    return wrapper
-
-
-@allow_dhcp_broadcast
-@disable_dhcp_service
-def send_dhcp_request(request):
-    __waiting_duration__ = [0, 10, 30, 60, 60]
-    for duration in __waiting_duration__:
-        try:
-            OSUTIL.allow_dhcp_broadcast()
-            response = socket_send(request)
-            validate_dhcp_resp(request, response)
-            return response
-        except AgentNetworkError as e:
-            logger.warn("Failed to send DHCP request: {0}", e)
-        time.sleep(duration)
-    return None
 
 def socket_send(request):
     sock = None
@@ -257,7 +245,7 @@ def socket_send(request):
         response = sock.recv(1024)
         return response
     except IOError as e:
-        raise AgentNetworkError("{0}".format(e))
+        raise DhcpError("{0}".format(e))
     finally:
         if sock is not None:
             sock.close()

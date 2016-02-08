@@ -27,7 +27,7 @@ import shutil
 import pwd
 import tempfile
 import azurelinuxagent.logger as logger
-from azurelinuxagent.future import text
+from azurelinuxagent.future import ustr
 import azurelinuxagent.utils.textutil as textutil
 
 def read_file(filepath, asbin=False, remove_bom=False, encoding='utf-8'):
@@ -46,7 +46,7 @@ def read_file(filepath, asbin=False, remove_bom=False, encoding='utf-8'):
         if remove_bom:
             #Remove bom on bytes data before it is converted into string.
             data = textutil.remove_bom(data)
-        data = text(data, encoding=encoding)
+        data = ustr(data, encoding=encoding)
         return data
 
 def write_file(filepath, contents, asbin=False, encoding='utf-8', append=False):
@@ -100,6 +100,7 @@ def replace_file(filepath, contents):
             return 1
     return 0
 
+
 def base_name(path):
     head, tail = os.path.split(path)
     return tail
@@ -151,7 +152,7 @@ def rm_dirs(*args):
 def update_conf_file(path, line_start, val, chk_err=False):
     conf = []
     if not os.path.isfile(path) and chk_err:
-        raise Exception("Can't find config file:{0}".format(path))
+        raise IOError("Can't find config file:{0}".format(path))
     conf = read_file(path).split('\n')
     conf = [x for x in conf if not x.startswith(line_start)]
     conf.append(val)

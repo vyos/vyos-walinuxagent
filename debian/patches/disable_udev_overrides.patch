@@ -1,0 +1,37 @@
+--- a/bin/waagent2.0
++++ b/bin/waagent2.0
+@@ -95,8 +95,7 @@
+ VMM_STARTUP_SCRIPT_NAME='install'
+ VMM_CONFIG_FILE_NAME='linuxosconfiguration.xml'
+ global RulesFiles
+-RulesFiles = [ "/lib/udev/rules.d/75-persistent-net-generator.rules",
+-               "/etc/udev/rules.d/70-persistent-net.rules" ]
++RulesFiles = [ ]
+ VarLibDhcpDirectories = ["/var/lib/dhclient", "/var/lib/dhcpcd", "/var/lib/dhcp"]
+ EtcDhcpClientConfFiles = ["/etc/dhcp/dhclient.conf", "/etc/dhcp3/dhclient.conf"]
+ global LibDir
+--- a/azurelinuxagent/distro/ubuntu/osutil.py
++++ b/azurelinuxagent/distro/ubuntu/osutil.py
+@@ -44,6 +44,12 @@
+     def start_agent_service(self):
+         return shellutil.run("service walinuxagent start", chk_err=False)
+ 
++    def remove_rules_files(self, rules_files=""):
++        pass
++
++    def restore_rules_files(self, rules_files=""):
++        pass
++
+ class Ubuntu12OSUtil(Ubuntu14OSUtil):
+     def __init__(self):
+         super(Ubuntu12OSUtil, self).__init__()
+@@ -67,9 +73,3 @@
+     def __init__(self):
+         super(UbuntuSnappyOSUtil, self).__init__()
+         self.conf_file_path = '/apps/walinuxagent/current/waagent.conf'
+-
+-    def remove_rules_files(self, rules_files=""):
+-        pass
+-
+-    def restore_rules_files(self, rules_files=""):
+-        pass

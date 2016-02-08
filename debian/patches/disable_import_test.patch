@@ -1,20 +1,3 @@
---- a/tests/test_import_waagent.py
-+++ b/tests/test_import_waagent.py
-@@ -28,13 +28,7 @@
- 
- class TestImportWAAgent(unittest.TestCase):
-     def test_import_waagent(self):
--        agent_path = os.path.join(tools.parent, 'bin/waagent')
--        if sys.version_info[0] == 2:
--            waagent = imp.load_source('waagent', agent_path) 
--            self.assertNotEquals(None, waagent.LoggerInit)
--        else:
--            self.assertRaises(ImportError, imp.load_source, 'waagent', 
--                              agent_path)
-+        pass
- 
- if __name__ == '__main__':
-     unittest.main()
 --- a/config/waagent.conf
 +++ b/config/waagent.conf
 @@ -14,13 +14,13 @@
@@ -34,8 +17,8 @@
  
  # Supported values are "rsa", "dsa" and "ecdsa".
  Provisioning.SshHostKeyPairType=rsa
-@@ -41,14 +41,14 @@
- #Provisioning.PasswordCryptSaltLength=10
+@@ -44,14 +44,14 @@
+ Provisioning.AllowResetSysUser=n
  
  # Format if unformatted. If 'n', resource disk will not be mounted.
 -ResourceDisk.Format=y
