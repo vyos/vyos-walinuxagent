@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3n3n3
 #
 # Microsoft Azure Linux Agent setup.py
 #
