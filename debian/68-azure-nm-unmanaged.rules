@@ -1,0 +1,4 @@
+# When WALinuxAgent is installed, then don't allow for network-manager
+# to manage the interface.
+#
+ENV{INTERFACE}=="eth[0-9]*", ENV{ID_NET_DRIVER}=="hv_netvsc", ENV{NM_UNMANAGED}="1"
