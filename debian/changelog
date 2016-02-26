@@ -1,3 +1,12 @@
+walinuxagent (2.1.3-0ubuntu3) xenial; urgency=medium
+
+  * Remove conflict with NetworkManager (LP: #1550461):
+    - devices on the hyperv bus are ignored via new udev rule.
+  * Made the upstart job more consistant with systemd service to use the
+    /dev/disk/azure/resource-part1 path instead of /dev/sdb (LP: #1544764)
+
+ -- Ben Howard <ben.howard@ubuntu.com>  Fri, 26 Feb 2016 11:06:35 -0700
+
 walinuxagent (2.1.3-0ubuntu2) xenial; urgency=medium
 
   * Fixed file shebangs to use python3.
