@@ -22,3 +22,6 @@ override_dh_installinit:
 override_dh_systemd_enable:
 	dh_systemd_enable --name walinuxagent walinuxagent.service
 	dh_systemd_enable --name ephemeral-disk-warning ephemeral-disk-warning.service
+
+override_dh_python3:
+	dh_python3 -O--buildsystem=pybuild --shebang "/usr/bin/env python3"
