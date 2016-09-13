@@ -1,0 +1,9 @@
+--- a/config/ubuntu/waagent.conf
++++ b/config/ubuntu/waagent.conf
+@@ -82,5 +82,5 @@
+ # OS.EnableRDMA=y
+ 
+ # Enable or disable self-update, default is enabled
+-AutoUpdate.Enabled=y
++AutoUpdate.Enabled=n
+ AutoUpdate.GAFamily=Prod

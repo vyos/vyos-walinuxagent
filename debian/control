@@ -21,7 +21,7 @@ Depends: cloud-init (>=0.7.3~bzr826-0ubuntu2),
          passwd (>=4.1.4.2),
          util-linux (>=2.0),
          ${misc:Depends},
-         ${python:Depends}
+         ${python3:Depends}
 Recommends: linux-image-extra-virtual
 Description: Windows Azure Linux Agent
  The Windows Azure Linux Agent supports the provisioning and running of Linux
