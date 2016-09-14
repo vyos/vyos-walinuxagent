@@ -1,3 +1,10 @@
+walinuxagent (2.1.5-0ubuntu2) yakkety; urgency=medium
+
+  * debian/walinuxagent.service: remove cloud-final.service from
+    both Wants and After. (LP: #1623570)
+
+ -- Scott Moser <smoser@ubuntu.com>  Wed, 14 Sep 2016 13:06:56 -0400
+
 walinuxagent (2.1.5-0ubuntu1) yakkety; urgency=medium
 
   * New upstream release (LP: #1603581)
