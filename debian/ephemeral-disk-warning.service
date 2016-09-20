@@ -1,6 +1,6 @@
 [Unit]
-Description=
-After=cloud-final.service
+Description=Write warning to Azure ephemeral disk
+After=cloud-config.service
 ConditionVirtualization=microsoft
 ConditionPathIsMountPoint=/mnt
 ConditionPathExists=/dev/disk/azure/resource-part1
@@ -13,4 +13,3 @@ StandardOutput=journal+console
 
 [Install]
 WantedBy=multi-user.target
-
