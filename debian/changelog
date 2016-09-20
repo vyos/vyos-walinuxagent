@@ -1,3 +1,13 @@
+walinuxagent (2.1.5-0ubuntu3) yakkety; urgency=medium
+
+  * debian/ephemeral-disk-warning.service: add a description
+  * debian/ephemeral-disk-warning.service: fix ordering cycle
+    (LP: #1624596)
+  * d/66-azure-storage.rules, d/install: fix dangling symlink in
+    at /lib/udev/rules.d/66-azure-storage.rules.
+
+ -- Scott Moser <smoser@ubuntu.com>  Tue, 20 Sep 2016 13:50:44 -0400
+
 walinuxagent (2.1.5-0ubuntu2) yakkety; urgency=medium
 
   * debian/walinuxagent.service: remove cloud-final.service from
