@@ -1,3 +1,11 @@
+walinuxagent (2.1.5-0ubuntu4) yakkety; urgency=medium
+
+  * d/patches/fix-auto-update.patch:
+    - This patch was provided via upstream to fix auto-update, in case users
+      choose to enable it.
+
+ -- Daniel Watkins <daniel.watkins@canonical.com>  Tue, 04 Oct 2016 12:25:07 +0100
+
 walinuxagent (2.1.5-0ubuntu3) yakkety; urgency=medium
 
   * debian/ephemeral-disk-warning.service: add a description
