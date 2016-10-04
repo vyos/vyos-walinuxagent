@@ -1,0 +1,70 @@
+Description: Fix potential infinite loop in agent updating
+Origin: upstream, via email
+Forwarded: not-needed
+diff --git a/azurelinuxagent/ga/update.py b/azurelinuxagent/ga/update.py
+index e89608a..0541ca3 100644
+--- a/azurelinuxagent/ga/update.py
++++ b/azurelinuxagent/ga/update.py
+@@ -379,14 +379,13 @@ class UpdateHandler(object):
+         """
+         Load all non-blacklisted agents currently on disk.
+         """
+-        if len(self.agents) <= 0:
+-            try:
+-                path = os.path.join(conf.get_lib_dir(), "{0}-*".format(AGENT_NAME))
+-                self._set_agents([GuestAgent(path=agent_dir)
+-                                    for agent_dir in glob.iglob(path) if os.path.isdir(agent_dir)])
+-                self._filter_blacklisted_agents()
+-            except Exception as e:
+-                logger.warn(u"Exception occurred loading available agents: {0}", ustr(e))
++        try:
++            path = os.path.join(conf.get_lib_dir(), "{0}-*".format(AGENT_NAME))
++            self._set_agents([GuestAgent(path=agent_dir)
++                                for agent_dir in glob.iglob(path) if os.path.isdir(agent_dir)])
++            self._filter_blacklisted_agents()
++        except Exception as e:
++            logger.warn(u"Exception occurred loading available agents: {0}", ustr(e))
+         return
+ 
+     def _purge_agents(self):
+diff --git a/tests/ga/test_update.py b/tests/ga/test_update.py
+index 74804fb..89fe95d 100644
+--- a/tests/ga/test_update.py
++++ b/tests/ga/test_update.py
+@@ -797,14 +797,14 @@ class TestUpdate(UpdateTestCase):
+         self.assertEqual(len(get_agents(self.tmp_dir)), len(self.update_handler.agents))
+         return
+ 
+-    def test_load_agents_does_not_reload(self):
++    def test_load_agents_does_reload(self):
+         self.prepare_agents()
+ 
+         self.update_handler._load_agents()
+         agents = self.update_handler.agents
+ 
+         self.update_handler._load_agents()
+-        self.assertEqual(agents, self.update_handler.agents)
++        self.assertNotEqual(agents, self.update_handler.agents)
+         return
+ 
+     def test_load_agents_sorts(self):
+@@ -945,7 +945,8 @@ class TestUpdate(UpdateTestCase):
+         self.assertEqual(0.0, latest_agent.error.last_failure)
+         self.assertEqual(0, latest_agent.error.failure_count)
+ 
+-        self._test_run_latest(mock_child=ChildMock(return_value=1))
++        with patch('azurelinuxagent.ga.update.UpdateHandler.get_latest_agent', return_value=latest_agent):
++            self._test_run_latest(mock_child=ChildMock(return_value=1))
+ 
+         self.assertTrue(latest_agent.is_available)
+         self.assertNotEqual(0.0, latest_agent.error.last_failure)
+@@ -961,7 +962,8 @@ class TestUpdate(UpdateTestCase):
+         self.assertEqual(0.0, latest_agent.error.last_failure)
+         self.assertEqual(0, latest_agent.error.failure_count)
+ 
+-        self._test_run_latest(mock_child=ChildMock(side_effect=Exception("Force blacklisting")))
++        with patch('azurelinuxagent.ga.update.UpdateHandler.get_latest_agent', return_value=latest_agent):
++            self._test_run_latest(mock_child=ChildMock(side_effect=Exception("Force blacklisting")))
+ 
+         self.assertFalse(latest_agent.is_available)
+         self.assertTrue(latest_agent.error.is_blacklisted)
