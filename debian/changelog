@@ -1,3 +1,9 @@
+walinuxagent (2.1.5-0ubuntu6) zesty; urgency=medium
+
+  * Revert 2.1.5-0ubuntu5, insecure.
+
+ -- Dimitri John Ledkov <xnox@ubuntu.com>  Thu, 05 Jan 2017 16:31:00 +0000
+
 walinuxagent (2.1.5-0ubuntu5) zesty; urgency=medium
 
   * debian/patches/lp-1650522-reenable-auto-update.patch:
