@@ -16,12 +16,12 @@
 #
 # Requires Python 2.4+ and Openssl 1.0+
 #
+
 import glob
 import json
 import os
 import platform
 import re
-import shlex
 import shutil
 import signal
 import subprocess
@@ -59,10 +59,14 @@ CHILD_LAUNCH_RESTART_MAX = 3
 CHILD_POLL_INTERVAL = 60
 
 MAX_FAILURE = 3 # Max failure allowed for agent before blacklisted
+RETAIN_INTERVAL = 24 * 60 * 60 # Retain interval for black list
 
 GOAL_STATE_INTERVAL = 25
 REPORT_STATUS_INTERVAL = 15
-RETAIN_INTERVAL = 24 * 60 * 60 # Retain interval for black list
+
+ORPHAN_WAIT_INTERVAL = 15 * 60 * 60
+
+AGENT_SENTINAL_FILE = "current_version"
 
 
 def get_update_handler():
@@ -81,7 +85,6 @@ class UpdateHandler(object):
         self.protocol_util = get_protocol_util()
 
         self.running = True
-        self.last_etag = None
         self.last_attempt_time = None
 
         self.agents = []
@@ -126,7 +129,7 @@ class UpdateHandler(object):
         try:
 
             # Launch the correct Python version for python-based agents
-            cmds = shlex.split(agent_cmd)
+            cmds = textutil.safe_shlex_split(agent_cmd)
             if cmds[0].lower() == "python":
                 cmds[0] = get_python_cmd()
                 agent_cmd = " ".join(cmds)
@@ -218,13 +221,21 @@ class UpdateHandler(object):
         from azurelinuxagent.ga.env import get_env_handler
         get_env_handler().run()
 
-        from azurelinuxagent.ga.exthandlers import get_exthandlers_handler
+        from azurelinuxagent.ga.exthandlers import get_exthandlers_handler, migrate_handler_state
         exthandlers_handler = get_exthandlers_handler()
+        migrate_handler_state()
 
-        # TODO: Add means to stop running
         try:
+            self._ensure_no_orphans()
+            self._emit_restart_event()
+
+            # TODO: Add means to stop running
             while self.running:
-                if self._ensure_latest_agent():
+                if self._is_orphaned:
+                    logger.info("Goal state agent {0} was orphaned -- exiting", CURRENT_AGENT)
+                    break
+
+                if self._upgrade_available():
                     if len(self.agents) > 0:
                         logger.info(
                             u"Agent {0} discovered {1} as an update and will exit",
@@ -234,16 +245,26 @@ class UpdateHandler(object):
 
                 exthandlers_handler.run()
                 
-                time.sleep(25)
+                time.sleep(GOAL_STATE_INTERVAL)
 
         except Exception as e:
             logger.warn(u"Agent {0} failed with exception: {1}", CURRENT_AGENT, ustr(e))
             sys.exit(1)
+            return
 
+        self._shutdown()
         sys.exit(0)
         return
 
     def forward_signal(self, signum, frame):
+        # Note:
+        #  - At present, the handler is registered only for SIGTERM.
+        #    However, clean shutdown is both SIGTERM and SIGKILL.
+        #    A SIGKILL handler is not being registered at this time to
+        #    minimize perturbing the code.
+        if signum in (signal.SIGTERM, signal.SIGKILL):
+            self._shutdown()
+
         if self.child_process is None:
             return
         
@@ -258,13 +279,14 @@ class UpdateHandler(object):
             self.signal_handler(signum, frame)
         elif self.signal_handler is signal.SIG_DFL:
             if signum == signal.SIGTERM:
+                # TODO: This should set self.running to False vs. just exiting
                 sys.exit(0)
         return
 
     def get_latest_agent(self):
         """
         If autoupdate is enabled, return the most current, downloaded,
-        non-blacklisted agent (if any).
+        non-blacklisted agent which is not the current version (if any).
         Otherwise, return None (implying to use the installed agent).
         """
 
@@ -272,10 +294,27 @@ class UpdateHandler(object):
             return None
         
         self._load_agents()
-        available_agents = [agent for agent in self.agents if agent.is_available]
+        available_agents = [agent for agent in self.agents
+                            if agent.is_available
+                            and agent.version > FlexibleVersion(AGENT_VERSION)]
+
         return available_agents[0] if len(available_agents) >= 1 else None
 
-    def _ensure_latest_agent(self, base_version=CURRENT_VERSION):
+    def _emit_restart_event(self):
+        if not self._is_clean_start:
+            msg = u"{0} did not terminate cleanly".format(CURRENT_AGENT)
+            logger.info(msg)
+            add_event(
+                AGENT_NAME,
+                version=CURRENT_VERSION,
+                op=WALAEventOperation.Restart,
+                is_success=False,
+                message=msg)
+
+        self._set_sentinal() 
+        return
+
+    def _upgrade_available(self, base_version=CURRENT_VERSION):
         # Ignore new agents if updating is disabled
         if not conf.get_autoupdate_enabled():
             return False
@@ -306,11 +345,8 @@ class UpdateHandler(object):
                 message=msg)
             return False
 
-        if self.last_etag is not None and self.last_etag == etag:
-            logger.info(u"Incarnation {0} has no agent updates", etag)
-            return False
-
-        manifests = [m for m in manifest_list.vmAgentManifests if m.family == family]
+        manifests = [m for m in manifest_list.vmAgentManifests \
+                        if m.family == family and len(m.versionsManifestUris) > 0]
         if len(manifests) == 0:
             logger.info(u"Incarnation {0} has no agent family {1} updates", etag, family)
             return False
@@ -318,7 +354,8 @@ class UpdateHandler(object):
         try:
             pkg_list = protocol.get_vmagent_pkgs(manifests[0])
         except ProtocolError as e:
-            msg= u"Incarnation {0} failed to get {1} package list: {2}".format(
+            msg = u"Incarnation {0} failed to get {1} package list: " \
+                  u"{2}".format(
                 etag,
                 family,
                 ustr(e))
@@ -331,17 +368,50 @@ class UpdateHandler(object):
                 message=msg)
             return False
 
-        # Set the agents to those available for download at least as current as the existing agent
-        # and remove from disk any agent no longer reported to the VM.
+        # Set the agents to those available for download at least as current
+        # as the existing agent and remove from disk any agent no longer
+        # reported to the VM.
         # Note:
-        #  The code leaves on disk available, but blacklisted, agents so as to preserve the state.
-        #  Otherwise, those agents could be again downloaded and inappropriately retried.
-        self._set_agents([GuestAgent(pkg=pkg) for pkg in pkg_list.versions])
+        #  The code leaves on disk available, but blacklisted, agents so as to
+        #  preserve the state. Otherwise, those agents could be again
+        #  downloaded and inappropriately retried.
+        host = None
+        if protocol and protocol.client:
+            host = protocol.client.get_host_plugin()
+        self._set_agents([GuestAgent(pkg=pkg, host=host) for pkg in pkg_list.versions])
         self._purge_agents()
         self._filter_blacklisted_agents()
 
         # Return True if agents more recent than the current are available
         return len(self.agents) > 0 and self.agents[0].version > base_version
+
+    def _ensure_no_orphans(self, orphan_wait_interval=ORPHAN_WAIT_INTERVAL):
+        previous_pid_file, pid_file = self._write_pid_file()
+        if previous_pid_file is not None:
+            try:
+                pid = fileutil.read_file(previous_pid_file)
+                wait_interval = orphan_wait_interval
+                while self.osutil.check_pid_alive(pid):
+                    wait_interval -= GOAL_STATE_INTERVAL
+                    if wait_interval <= 0:
+                        logger.warn(
+                            u"{0} forcibly terminated orphan process {1}",
+                            CURRENT_AGENT,
+                            pid)
+                        os.kill(pid, signal.SIGKILL)
+                        break
+                    
+                    logger.info(
+                        u"{0} waiting for orphan process {1} to terminate",
+                        CURRENT_AGENT,
+                        pid)
+                    time.sleep(GOAL_STATE_INTERVAL)
+
+            except Exception as e:
+                logger.warn(
+                    u"Exception occurred waiting for orphan agent to terminate: {0}",
+                    ustr(e))
+        return
 
     def _evaluate_agent_health(self, latest_agent):
         """
@@ -374,6 +444,50 @@ class UpdateHandler(object):
     def _filter_blacklisted_agents(self):
         self.agents = [agent for agent in self.agents if not agent.is_blacklisted]
         return
+
+    def _get_pid_files(self):
+        pid_file = conf.get_agent_pid_file_path()
+        
+        pid_dir = os.path.dirname(pid_file)
+        pid_name = os.path.basename(pid_file)
+        
+        pid_re = re.compile("(\d+)_{0}".format(re.escape(pid_name)))
+        pid_files = [int(pid_re.match(f).group(1)) for f in os.listdir(pid_dir) if pid_re.match(f)]
+        pid_files.sort()
+
+        pid_index = -1 if len(pid_files) <= 0 else pid_files[-1]
+        previous_pid_file = None \
+                        if pid_index < 0 \
+                        else os.path.join(pid_dir, "{0}_{1}".format(pid_index, pid_name))
+        pid_file = os.path.join(pid_dir, "{0}_{1}".format(pid_index+1, pid_name))
+        return previous_pid_file, pid_file
+
+    @property
+    def _is_clean_start(self):
+        if not os.path.isfile(self._sentinal_file_path()):
+            return True
+
+        try:
+            if fileutil.read_file(self._sentinal_file_path()) != CURRENT_AGENT:
+                return True
+        except Exception as e:
+            logger.warn(
+                u"Exception reading sentinal file {0}: {1}",
+                self._sentinal_file_path(),
+                str(e))
+
+        return False
+
+    @property
+    def _is_orphaned(self):
+        parent_pid = os.getppid()
+        if parent_pid in (1, None):
+            return True
+
+        if not os.path.isfile(conf.get_agent_pid_file_path()):
+            return True
+
+        return fileutil.read_file(conf.get_agent_pid_file_path()) != ustr(parent_pid)
 
     def _load_agents(self):
         """
@@ -422,10 +536,51 @@ class UpdateHandler(object):
         self.agents.sort(key=lambda agent: agent.version, reverse=True)
         return
 
+    def _set_sentinal(self, agent=CURRENT_AGENT):
+        try:
+            fileutil.write_file(self._sentinal_file_path(), agent)
+        except Exception as e:
+            logger.warn(
+                u"Exception writing sentinal file {0}: {1}",
+                self._sentinal_file_path(),
+                str(e))
+        return
+
+    def _sentinal_file_path(self):
+        return os.path.join(conf.get_lib_dir(), AGENT_SENTINAL_FILE)
+
+    def _shutdown(self):
+        if not os.path.isfile(self._sentinal_file_path()):
+            return
+
+        try:
+            os.remove(self._sentinal_file_path())
+        except Exception as e:
+            logger.warn(
+                u"Exception removing sentinal file {0}: {1}",
+                self._sentinal_file_path(),
+                str(e))
+        return
+
+    def _write_pid_file(self):
+        previous_pid_file, pid_file = self._get_pid_files()
+        try:
+            fileutil.write_file(pid_file, ustr(os.getpid()))
+            logger.info(u"{0} running as process {1}", CURRENT_AGENT, ustr(os.getpid()))
+        except Exception as e:
+            pid_file = None
+            logger.warn(
+                u"Expection writing goal state agent {0} pid to {1}: {2}",
+                CURRENT_AGENT,
+                pid_file,
+                ustr(e))
+        return previous_pid_file, pid_file
+
 
 class GuestAgent(object):
-    def __init__(self, path=None, pkg=None):
+    def __init__(self, path=None, pkg=None, host=None):
         self.pkg = pkg
+        self.host = host
         version = None
         if path is not None:
             m = AGENT_DIR_PATTERN.match(path)
@@ -542,18 +697,15 @@ class GuestAgent(object):
         return
 
     def _download(self):
-        package = None
-
         for uri in self.pkg.uris:
-            try:
-                resp = restutil.http_get(uri.uri, chk_proxy=True)
-                if resp.status == restutil.httpclient.OK:
-                    package = resp.read()
-                    fileutil.write_file(self.get_agent_pkg_path(), bytearray(package), asbin=True)
-                    logger.info(u"Agent {0} downloaded from {1}", self.name, uri.uri)
-                    break
-            except restutil.HttpError as e:
-                logger.warn(u"Agent {0} download from {1} failed", self.name, uri.uri)
+            if self._fetch(uri.uri):
+                break
+            else:
+                if self.host is not None:
+                    logger.info("Download unsuccessful, falling back to host plugin")
+                    uri, headers = self.host.get_artifact_request(uri.uri, self.host.manifest_uri)
+                    if self._fetch(uri, headers=headers):
+                        break
 
         if not os.path.isfile(self.get_agent_pkg_path()):
             msg = u"Unable to download Agent {0} from any URI".format(self.name)
@@ -565,6 +717,23 @@ class GuestAgent(object):
                 message=msg)
             raise UpdateError(msg)
         return
+
+    def _fetch(self, uri, headers=None):
+        package = None
+        try:
+            resp = restutil.http_get(uri, chk_proxy=True, headers=headers)
+            if resp.status == restutil.httpclient.OK:
+                package = resp.read()
+                fileutil.write_file(self.get_agent_pkg_path(),
+                                    bytearray(package),
+                                    asbin=True)
+                logger.info(u"Agent {0} downloaded from {1}", self.name, uri)
+        except restutil.HttpError as http_error:
+            logger.verbose(u"Agent {0} download from {1} failed [{2}]",
+                        self.name,
+                        uri,
+                        http_error)
+        return package is not None
 
     def _load_error(self):
         try:

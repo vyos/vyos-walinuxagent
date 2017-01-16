@@ -16,6 +16,7 @@
 # Requires Python 2.4+ and Openssl 1.0+
 #
 
+import multiprocessing
 import os
 import re
 import shutil
@@ -246,16 +247,6 @@ class DefaultOSUtil(object):
             return output.startswith("Enforcing")
         else:
             return False
-
-    def set_selinux_enforce(self, state):
-        """
-        Calls shell command 'setenforce' with 'state'
-        and returns resulting exit code.
-        """
-        if self.is_selinux_system():
-            if state: s = '1'
-            else: s='0'
-            return shellutil.run("setenforce "+s)
 
     def set_selinux_context(self, path, con):
         """
@@ -649,7 +640,7 @@ class DefaultOSUtil(object):
         return shellutil.run(cmd, chk_err=False)
 
     def get_dhcp_pid(self):
-        ret= shellutil.run_get_output("pidof dhclient")
+        ret = shellutil.run_get_output("pidof dhclient", chk_err=False)
         return ret[1] if ret[0] == 0 else None
 
     def set_hostname(self, hostname):
@@ -761,19 +752,11 @@ class DefaultOSUtil(object):
         return base64.b64decode(data)
 
     def get_total_mem(self):
-        cmd = "grep MemTotal /proc/meminfo |awk '{print $2}'"
-        ret = shellutil.run_get_output(cmd)
-        if ret[0] == 0:
-            return int(ret[1])/1024
-        else:
-            raise OSUtilError("Failed to get total memory: {0}".format(ret[1]))
+        # Get total memory in bytes and divide by 1024**2 to get the valu in MB.
+        return os.sysconf('SC_PAGE_SIZE') * os.sysconf('SC_PHYS_PAGES') / (1024**2)
 
     def get_processor_cores(self):
-        ret = shellutil.run_get_output("grep 'processor.*:' /proc/cpuinfo |wc -l")
-        if ret[0] == 0:
-            return int(ret[1])
-        else:
-            raise OSUtilError("Failed to get processor cores")
+        return multiprocessing.cpu_count()
 
     def set_admin_access_to_ip(self, dest_ip):
         #This allows root to access dest_ip

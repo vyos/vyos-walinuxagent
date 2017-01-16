@@ -1,7 +1,9 @@
---- a/config/waagent.conf
-+++ b/config/waagent.conf
-@@ -14,13 +14,13 @@
- Role.TopologyConsumer=None
+Index: walinuxagent-2.2.2/config/waagent.conf
+===================================================================
+--- walinuxagent-2.2.2.orig/config/waagent.conf
++++ walinuxagent-2.2.2/config/waagent.conf
+@@ -3,13 +3,13 @@
+ #
  
  # Enable instance creation
 -Provisioning.Enabled=y
@@ -17,7 +19,7 @@
  
  # Supported values are "rsa", "dsa" and "ecdsa".
  Provisioning.SshHostKeyPairType=rsa
-@@ -44,14 +44,14 @@
+@@ -33,14 +33,14 @@ Provisioning.ExecuteCustomData=n
  Provisioning.AllowResetSysUser=n
  
  # Format if unformatted. If 'n', resource disk will not be mounted.

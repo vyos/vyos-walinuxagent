@@ -21,6 +21,7 @@ import glob
 import json
 import os
 import shutil
+import stat
 import subprocess
 import time
 import zipfile
@@ -108,6 +109,45 @@ def parse_ext_status(ext_status, data):
     for substatus in substatus_list:
         ext_status.substatusList.append(parse_ext_substatus(substatus))
 
+# This code migrates, if it exists, handler state and status from an
+# agent-owned directory into the handler-owned config directory
+#
+# Notes:
+#  - The v2.0.x branch wrote all handler-related state into the handler-owned
+#    config directory (e.g., /var/lib/waagent/Microsoft.Azure.Extensions.LinuxAsm-2.0.1/config).
+#  - The v2.1.x branch original moved that state into an agent-owned handler
+#    state directory (e.g., /var/lib/waagent/handler_state).
+#  - This move can cause v2.1.x agents to multiply invoke a handler's install
+#    command. It also makes clean-up more difficult since the agent must
+#    remove the state as well as the handler directory.
+def migrate_handler_state():
+    handler_state_path = os.path.join(conf.get_lib_dir(), "handler_state")
+    if not os.path.isdir(handler_state_path):
+        return
+
+    for handler_path in glob.iglob(os.path.join(handler_state_path, "*")):
+        handler = os.path.basename(handler_path)
+        handler_config_path = os.path.join(conf.get_lib_dir(), handler, "config")
+        if os.path.isdir(handler_config_path):
+            for file in ("State", "Status"):
+                from_path = os.path.join(handler_state_path, handler, file.lower())
+                to_path = os.path.join(handler_config_path, "Handler" + file)
+                if os.path.isfile(from_path) and not os.path.isfile(to_path):
+                    try:
+                        shutil.move(from_path, to_path)
+                    except Exception as e:
+                        logger.warn(
+                            "Exception occurred migrating {0} {1} file: {2}",
+                            handler,
+                            file,
+                            str(e))
+
+    try:
+        shutil.rmtree(handler_state_path)
+    except Exception as e:
+        logger.warn("Exception occurred removing {0}: {1}", handler_state_path, str(e))
+    return
+
 class ExtHandlerState(object):
     NotInstalled = "NotInstalled"
     Installed = "Installed"
@@ -122,6 +162,7 @@ class ExtHandlersHandler(object):
         self.ext_handlers = None
         self.last_etag = None
         self.log_report = False
+        self.log_etag = True
 
     def run(self):
         self.ext_handlers, etag = None, None
@@ -135,16 +176,12 @@ class ExtHandlersHandler(object):
             add_event(AGENT_NAME, version=CURRENT_VERSION, is_success=False, message=msg)
             return
 
-        if self.last_etag is not None and self.last_etag == etag:
-            msg = u"Incarnation {0} has no extension updates".format(etag)
-            logger.verbose(msg)
-            self.log_report = False
-        else:
-            msg = u"Handle extensions updates for incarnation {0}".format(etag)
-            logger.info(msg)
-            self.log_report = True #Log status report success on new config
-            self.handle_ext_handlers()
-            self.last_etag = etag
+        msg = u"Handle extensions updates for incarnation {0}".format(etag)
+        logger.verbose(msg)
+        # Log status report success on new config
+        self.log_report = True
+        self.handle_ext_handlers(etag)
+        self.last_etag = etag
 
         self.report_ext_handlers_status()
 
@@ -152,18 +189,36 @@ class ExtHandlersHandler(object):
         self.report_ext_handlers_status()
         return
    
-    def handle_ext_handlers(self):
+    def handle_ext_handlers(self, etag=None):
         if self.ext_handlers.extHandlers is None or \
                 len(self.ext_handlers.extHandlers) == 0:
-            logger.info("No ext handler config found")
+            logger.verbose("No extension handler config found")
             return
 
+        if conf.get_enable_overprovisioning():
+            artifacts_profile = self.protocol.get_artifacts_profile()
+            if artifacts_profile and artifacts_profile.is_on_hold():
+                logger.info("Extension handling is on hold")
+                return
+
         for ext_handler in self.ext_handlers.extHandlers:
-            #TODO handle install in sequence, enable in parallel
-            self.handle_ext_handler(ext_handler)
+            # TODO: handle install in sequence, enable in parallel
+            self.handle_ext_handler(ext_handler, etag)
     
-    def handle_ext_handler(self, ext_handler):
+    def handle_ext_handler(self, ext_handler, etag):
         ext_handler_i = ExtHandlerInstance(ext_handler, self.protocol)
+
+        ext_handler_i.decide_version()
+        if not ext_handler_i.is_upgrade and self.last_etag == etag:
+            if self.log_etag:
+                ext_handler_i.logger.verbose("Version {0} is current for etag {1}",
+                                             ext_handler_i.pkg.version,
+                                             etag)
+                self.log_etag = False
+            return
+
+        self.log_etag = True
+
         try:
             state = ext_handler.properties.state
             ext_handler_i.logger.info("Expected handler state: {0}", state)
@@ -182,12 +237,10 @@ class ExtHandlersHandler(object):
     
     def handle_enable(self, ext_handler_i):
 
-        ext_handler_i.decide_version() 
-
         old_ext_handler_i = ext_handler_i.get_installed_ext_handler()
         if old_ext_handler_i is not None and \
            old_ext_handler_i.version_gt(ext_handler_i):
-            raise ExtensionError(u"Downgrade not allowed")  
+            raise ExtensionError(u"Downgrade not allowed")
 
         handler_state = ext_handler_i.get_handler_state()
         ext_handler_i.logger.info("Current handler state is: {0}", handler_state)
@@ -246,16 +299,13 @@ class ExtHandlersHandler(object):
                         message=ustr(e))
         
         logger.verbose("Report vm agent status")
-        
         try:
             self.protocol.report_vm_status(vm_status)
+            if self.log_report:
+                logger.verbose("Successfully reported vm agent status")
         except ProtocolError as e:
             message = "Failed to report vm agent status: {0}".format(e)
             add_event(AGENT_NAME, version=CURRENT_VERSION, is_success=False, message=message)
-
-        if self.log_report:
-            logger.verbose("Successfully reported vm agent status")
-
 
     def report_ext_handler_status(self, vm_status, ext_handler):
         ext_handler_i = ExtHandlerInstance(ext_handler, self.protocol)
@@ -287,6 +337,7 @@ class ExtHandlerInstance(object):
         self.protocol = protocol
         self.operation = None
         self.pkg = None
+        self.is_upgrade = False
 
         prefix = "[{0}]".format(self.get_full_name())
         self.logger = logger.Logger(logger.DEFAULT_LOGGER, prefix)
@@ -301,7 +352,7 @@ class ExtHandlerInstance(object):
                                  logger.LogLevel.INFO, log_file)
 
     def decide_version(self):
-        self.logger.info("Decide which version to use")
+        self.logger.verbose("Decide which version to use")
         try:
             pkg_list = self.protocol.get_ext_handler_pkgs(self.ext_handler)
         except ProtocolError as e:
@@ -309,9 +360,10 @@ class ExtHandlerInstance(object):
 
         # Determine the desired and installed versions
         requested_version = FlexibleVersion(self.ext_handler.properties.version)
-        installed_version = FlexibleVersion(self.get_installed_version())
-        if installed_version is None:
-            installed_version = requested_version
+        installed_version_string = self.get_installed_version()
+        installed_version = requested_version \
+            if installed_version_string is None \
+            else FlexibleVersion(installed_version_string)
 
         # Divide packages
         # - Find the installed package (its version must exactly match)
@@ -392,10 +444,15 @@ class ExtHandlerInstance(object):
             self.pkg = selected_pkg
             self.ext_handler.properties.version = selected_pkg.version
 
+        # Note if the selected package is greater than that installed
+        if installed_pkg is None \
+            or FlexibleVersion(self.pkg.version) > FlexibleVersion(installed_pkg.version):
+            self.is_upgrade = True
+
         if self.pkg is None:
             raise ExtensionError("Failed to find any valid extension package")
 
-        self.logger.info("Use version: {0}", self.pkg.version)
+        self.logger.verbose("Use version: {0}", self.pkg.version)
         return
 
     def version_gt(self, other):
@@ -464,8 +521,10 @@ class ExtHandlerInstance(object):
         for uri in self.pkg.uris:
             try:
                 package = self.protocol.download_ext_handler_pkg(uri.uri)
-            except ProtocolError as e: 
-                logger.warn("Failed download extension: {0}", e)
+                if package is not None:
+                    break
+            except Exception as e:
+                logger.warn("Error while downloading extension: {0}", e)
         
         if package is None:
             raise ExtensionError("Failed to download extension")
@@ -479,8 +538,10 @@ class ExtHandlerInstance(object):
         except IOError as e:
             raise ExtensionError(u"Failed to write and unzip plugin", e)
 
-        chmod = "find {0} -type f | xargs chmod u+x".format(self.get_base_dir())
-        shellutil.run(chmod)
+        #Add user execute permission to all files under the base dir
+        for file in fileutil.get_all_files(self.get_base_dir()):
+            fileutil.chmod(file, os.stat(file).st_mode | stat.S_IXUSR)
+
         self.report_event(message="Download succeeded")
 
         self.logger.info("Initialize extension directory")
@@ -547,10 +608,6 @@ class ExtHandlerInstance(object):
     
     def rm_ext_handler_dir(self):
         try:
-            handler_state_dir = self.get_handler_state_dir()
-            if os.path.isdir(handler_state_dir):
-                self.logger.info("Remove ext handler dir: {0}", handler_state_dir)
-                shutil.rmtree(handler_state_dir)
             base_dir = self.get_base_dir()
             if os.path.isdir(base_dir):
                 self.logger.info("Remove ext handler dir: {0}", base_dir)
@@ -746,28 +803,18 @@ class ExtHandlerInstance(object):
             fileutil.write_file(self.get_env_file(), json.dumps(env))
         except IOError as e:
             raise ExtensionError(u"Failed to save handler environment", e)
-    
-    def get_handler_state_dir(self):
-        return os.path.join(conf.get_lib_dir(), "handler_state", 
-                            self.get_full_name())
 
     def set_handler_state(self, handler_state):
-        state_dir = self.get_handler_state_dir()
-        if not os.path.exists(state_dir):
-            try:
-                fileutil.mkdir(state_dir, 0o700)
-            except IOError as e:
-                self.logger.error("Failed to create state dir: {0}", e)
-        
+        state_dir = self.get_conf_dir()
         try:
-            state_file = os.path.join(state_dir, "state")
+            state_file = os.path.join(state_dir, "HandlerState")
             fileutil.write_file(state_file, handler_state)
         except IOError as e:
             self.logger.error("Failed to set state: {0}", e)
     
     def get_handler_state(self):
-        state_dir = self.get_handler_state_dir()
-        state_file = os.path.join(state_dir, "state")
+        state_dir = self.get_conf_dir()
+        state_file = os.path.join(state_dir, "HandlerState")
         if not os.path.isfile(state_file):
             return ExtHandlerState.NotInstalled
 
@@ -777,32 +824,25 @@ class ExtHandlerInstance(object):
             self.logger.error("Failed to get state: {0}", e)
             return ExtHandlerState.NotInstalled
     
-    def set_handler_status(self, status="NotReady", message="", 
-                           code=0):
-        state_dir = self.get_handler_state_dir()
-        if not os.path.exists(state_dir):
-            try:
-                fileutil.mkdir(state_dir, 0o700)
-            except IOError as e:
-                self.logger.error("Failed to create state dir: {0}", e)
-        
+    def set_handler_status(self, status="NotReady", message="", code=0):
+        state_dir = self.get_conf_dir()
+
         handler_status = ExtHandlerStatus()
         handler_status.name = self.ext_handler.name
         handler_status.version = self.ext_handler.properties.version
         handler_status.message = message
         handler_status.code = code
         handler_status.status = status
-        status_file = os.path.join(state_dir, "status")
+        status_file = os.path.join(state_dir, "HandlerStatus")
 
         try:
-            fileutil.write_file(status_file, 
-                                json.dumps(get_properties(handler_status)))
+            fileutil.write_file(status_file, json.dumps(get_properties(handler_status)))
         except (IOError, ValueError, ProtocolError) as e:
             self.logger.error("Failed to save handler status: {0}", e)
         
     def get_handler_status(self):
-        state_dir = self.get_handler_state_dir()
-        status_file = os.path.join(state_dir, "status")
+        state_dir = self.get_conf_dir()
+        status_file = os.path.join(state_dir, "HandlerStatus")
         if not os.path.isfile(status_file):
             return None
         
@@ -899,4 +939,4 @@ class HandlerManifest(object):
         update_mode = self.data['handlerManifest'].get('updateMode')
         if update_mode is None:
             return True
-        return update_mode.low() == "updatewithinstall"
+        return update_mode.lower() == "updatewithinstall"

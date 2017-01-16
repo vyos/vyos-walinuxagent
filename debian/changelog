@@ -1,3 +1,13 @@
+walinuxagent (2.2.2-0ubuntu1) zesty; urgency=medium
+
+  * New upstream release (LP: #1651128)
+    - d/patches/fix-auto-update.patch,
+      d/patches/lp1623570-adjust-walinuxagent-service-after-and-wants.patch:
+      - Dropped as changes have been applied upstream
+    - Refreshed debian/patches/disable_import_test.patch
+
+ -- Łukasz 'sil2100' Zemczak <lukasz.zemczak@ubuntu.com>  Mon, 16 Jan 2017 10:10:41 +0100
+
 walinuxagent (2.1.5-0ubuntu6) zesty; urgency=medium
 
   * Revert 2.1.5-0ubuntu5, insecure.

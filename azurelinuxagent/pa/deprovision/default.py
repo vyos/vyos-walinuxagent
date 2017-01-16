@@ -17,6 +17,8 @@
 # Requires Python 2.4+ and Openssl 1.0+
 #
 
+import signal
+import sys
 import azurelinuxagent.common.conf as conf
 from azurelinuxagent.common.exception import ProtocolError
 from azurelinuxagent.common.future import read_input
@@ -38,6 +40,7 @@ class DeprovisionHandler(object):
     def __init__(self):
         self.osutil = get_osutil()
         self.protocol_util = get_protocol_util()
+        signal.signal(signal.SIGINT, self.handle_interrupt_signal)
 
     def del_root_password(self, warnings, actions):
         warnings.append("WARNING! root password will be disabled. "
@@ -63,8 +66,8 @@ class DeprovisionHandler(object):
 
     def regen_ssh_host_key(self, warnings, actions):
         warnings.append("WARNING! All SSH host key pairs will be deleted.")
-        actions.append(DeprovisionAction(shellutil.run,
-                                         ['rm -f /etc/ssh/ssh_host_*key*']))
+        actions.append(DeprovisionAction(fileutil.rm_files,
+                                         ['/etc/ssh/ssh_host_*key*']))
 
     def stop_agent_service(self, warnings, actions):
         warnings.append("WARNING! The waagent service will be stopped.")
@@ -72,6 +75,11 @@ class DeprovisionHandler(object):
 
     def del_files(self, warnings, actions):
         files_to_del = ['/root/.bash_history', '/var/log/waagent.log']
+        actions.append(DeprovisionAction(fileutil.rm_files, files_to_del))
+
+    def del_resolv(self, warnings, actions):
+        warnings.append("WARNING! /etc/resolv.conf will be deleted.")
+        files_to_del = ["/etc/resolv.conf"]
         actions.append(DeprovisionAction(fileutil.rm_files, files_to_del))
 
     def del_dhcp_lease(self, warnings, actions):
@@ -109,6 +117,7 @@ class DeprovisionHandler(object):
 
         self.del_lib_dir(warnings, actions)
         self.del_files(warnings, actions)
+        self.del_resolv(warnings, actions)
 
         if deluser:
             self.del_user(warnings, actions)
@@ -127,5 +136,9 @@ class DeprovisionHandler(object):
 
         for action in actions:
             action.invoke()
+
+    def handle_interrupt_signal(self, frame):
+        print("Deprovision is interrupted.")
+        sys.exit(0)
 
 
