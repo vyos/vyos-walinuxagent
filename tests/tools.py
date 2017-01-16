@@ -56,10 +56,12 @@ class AgentTestCase(unittest.TestCase):
     def setUp(self):
         prefix = "{0}_".format(self.__class__.__name__)
         self.tmp_dir = tempfile.mkdtemp(prefix=prefix)
+        self.test_file = 'test_file'
         conf.get_autoupdate_enabled = Mock(return_value=True)
         conf.get_lib_dir = Mock(return_value=self.tmp_dir)
         ext_log_dir = os.path.join(self.tmp_dir, "azure")
         conf.get_ext_log_dir = Mock(return_value=ext_log_dir)
+        conf.get_agent_pid_file_path = Mock(return_value=os.path.join(self.tmp_dir, "waagent.pid"))
 
     def tearDown(self):
         if not debug and self.tmp_dir is not None:

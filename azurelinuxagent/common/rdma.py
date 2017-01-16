@@ -86,8 +86,7 @@ class RDMAHandler(object):
 
         driver_info_source = '/var/lib/hyperv/.kvp_pool_0'
         base_kernel_err_msg = 'Kernel does not provide the necessary '
-        base_kernel_err_msg += 'information or the hv_kvp_daemon is not '
-        base_kernel_err_msg += 'running.'
+        base_kernel_err_msg += 'information or the kvp daemon is not running.'
         if not os.path.isfile(driver_info_source):
             error_msg = 'RDMA: Source file "%s" does not exist. '
             error_msg += base_kernel_err_msg
@@ -109,6 +108,26 @@ class RDMAHandler(object):
             error_msg = 'RDMA: NdDriverVersion not found in "%s"'
             logger.error(error_msg % driver_info_source)
             return
+
+    @staticmethod
+    def is_kvp_daemon_running():
+        """Look for kvp daemon names in ps -ef output and return True/False
+        """
+        # for centos, the hypervkvpd and the hv_kvp_daemon both are ok.
+        # for suse, it uses hv_kvp_daemon
+        kvp_daemon_names = ['hypervkvpd', 'hv_kvp_daemon']
+
+        exitcode, ps_out  = shellutil.run_get_output("ps -ef")
+        if exitcode != 0:
+            raise Exception('RDMA: ps -ef failed: %s' % ps_out)
+        for n in  kvp_daemon_names:
+            if n in ps_out:
+                logger.info('RDMA: kvp daemon (%s) is running' % n)
+                return True
+            else:
+                logger.verbose('RDMA: kvp daemon (%s) is not running' % n)
+        return False
+
 
     def load_driver_module(self):
         """Load the kernel driver, this depends on the proper driver
@@ -178,12 +197,33 @@ class RDMADeviceHandler(object):
         threading.Thread(target=self.process).start()
 
     def process(self):
-        RDMADeviceHandler.wait_rdma_device(
-            self.rdma_dev, self.device_check_timeout_sec, self.device_check_interval_sec)
-        RDMADeviceHandler.update_dat_conf(dapl_config_paths, self.ipv4_addr)
-        RDMADeviceHandler.write_rdma_config_to_device(
-            self.rdma_dev, self.ipv4_addr, self.mac_addr)
-        RDMADeviceHandler.update_network_interface(self.mac_addr, self.ipv4_addr)
+        try:
+            RDMADeviceHandler.update_dat_conf(dapl_config_paths, self.ipv4_addr)
+
+            skip_rdma_device = False
+            retcode,out = shellutil.run_get_output("modinfo hv_network_direct")
+            if retcode == 0:
+                version = re.search("version:\s+(\d+)\.(\d+)\.(\d+)\D", out, re.IGNORECASE)
+                if version:
+                    v1 = int(version.groups(0)[0])
+                    v2 = int(version.groups(0)[1])
+                    if v1>4 or v1==4 and v2>0:
+                        logger.info("Skip setting /dev/hvnd_rdma on 4.1 or later")
+                        skip_rdma_device = True
+                else:
+                    logger.info("RDMA: hv_network_direct driver version not present, assuming 4.0.x or older.")
+            else:
+                logger.warn("RDMA: failed to get module info on hv_network_direct.")
+
+            if not skip_rdma_device:
+                RDMADeviceHandler.wait_rdma_device(
+                    self.rdma_dev, self.device_check_timeout_sec, self.device_check_interval_sec)
+                RDMADeviceHandler.write_rdma_config_to_device(
+                    self.rdma_dev, self.ipv4_addr, self.mac_addr)
+
+            RDMADeviceHandler.update_network_interface(self.mac_addr, self.ipv4_addr)
+        except Exception as e:
+            logger.error("RDMA: device processing failed: {0}".format(e))
 
     @staticmethod
     def update_dat_conf(paths, ipv4_addr):
@@ -221,6 +261,7 @@ class RDMADeviceHandler(object):
         logger.info(
             "RDMA: Updating device with configuration: {0}".format(data))
         with open(path, "w") as f:
+            logger.info("RDMA: Device opened for writing")
             f.write(data)
         logger.info("RDMA: Updated device with IPv4/MAC addr successfully")
 
