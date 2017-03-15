@@ -1,6 +1,5 @@
 debian/99-cloud-init-disable-diskprovisioning.conf
 NOTICE
-LICENSE.txt
 README.md
 MANIFEST
 Changelog

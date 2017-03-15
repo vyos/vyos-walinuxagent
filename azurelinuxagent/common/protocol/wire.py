@@ -250,6 +250,9 @@ def ga_status_to_v1(ga_status):
     v1_ga_status = {
         'version': ga_status.version,
         'status': ga_status.status,
+        'osversion': ga_status.osversion,
+        'osname': ga_status.osname,
+        'hostname': ga_status.hostname,
         'formattedMessage': formatted_msg
     }
     return v1_ga_status
@@ -338,7 +341,7 @@ def vm_status_to_v1(vm_status, ext_statuses):
         'handlerAggregateStatus': v1_handler_status_list
     }
     v1_vm_status = {
-        'version': '1.0',
+        'version': '1.1',
         'timestampUTC': timestamp,
         'aggregateStatus': v1_agg_status
     }
@@ -638,9 +641,10 @@ class WireClient(object):
                 uri, headers = host.get_artifact_request(version.uri)
                 response = self.fetch(uri, headers)
                 if not response:
+                    host = self.get_host_plugin(force_update=True)
                     logger.info("Retry fetch in {0} seconds",
-                                LONG_WAITING_INTERVAL)
-                    time.sleep(LONG_WAITING_INTERVAL)
+                                SHORT_WAITING_INTERVAL)
+                    time.sleep(SHORT_WAITING_INTERVAL)
                 else:
                     host.manifest_uri = version.uri
                     logger.verbose("Manifest downloaded successfully from host plugin")
@@ -659,9 +663,10 @@ class WireClient(object):
             if resp.status == httpclient.OK:
                 return_value = self.decode_config(resp.read())
             else:
-                logger.warn("Could not fetch {0} [{1}]",
+                logger.warn("Could not fetch {0} [{1}: {2}]",
                             uri,
-                            resp.status)
+                            resp.status,
+                            resp.reason)
         except (HttpError, ProtocolError) as e:
             logger.verbose("Fetch failed from [{0}]", uri)
         return return_value
@@ -716,7 +721,7 @@ class WireClient(object):
 
         if not forced:
             last_incarnation = None
-            if (os.path.isfile(incarnation_file)):
+            if os.path.isfile(incarnation_file):
                 last_incarnation = fileutil.read_file(incarnation_file)
             new_incarnation = goal_state.incarnation
             if last_incarnation is not None and \
@@ -731,11 +736,11 @@ class WireClient(object):
                 file_name = GOAL_STATE_FILE_NAME.format(goal_state.incarnation)
                 goal_state_file = os.path.join(conf.get_lib_dir(), file_name)
                 self.save_cache(goal_state_file, xml_text)
-                self.save_cache(incarnation_file, goal_state.incarnation)
                 self.update_hosting_env(goal_state)
                 self.update_shared_conf(goal_state)
                 self.update_certs(goal_state)
                 self.update_ext_conf(goal_state)
+                self.save_cache(incarnation_file, goal_state.incarnation)
                 if self.host_plugin is not None:
                     self.host_plugin.container_id = goal_state.container_id
                     self.host_plugin.role_config_name = goal_state.role_config_name
@@ -760,7 +765,7 @@ class WireClient(object):
         return self.goal_state
 
     def get_hosting_env(self):
-        if (self.hosting_env is None):
+        if self.hosting_env is None:
             local_file = os.path.join(conf.get_lib_dir(),
                                       HOSTING_ENV_FILE_NAME)
             xml_text = self.fetch_cache(local_file)
@@ -768,7 +773,7 @@ class WireClient(object):
         return self.hosting_env
 
     def get_shared_conf(self):
-        if (self.shared_conf is None):
+        if self.shared_conf is None:
             local_file = os.path.join(conf.get_lib_dir(),
                                       SHARED_CONF_FILE_NAME)
             xml_text = self.fetch_cache(local_file)
@@ -776,7 +781,7 @@ class WireClient(object):
         return self.shared_conf
 
     def get_certs(self):
-        if (self.certs is None):
+        if self.certs is None:
             local_file = os.path.join(conf.get_lib_dir(), CERTS_FILE_NAME)
             xml_text = self.fetch_cache(local_file)
             self.certs = Certificates(self, xml_text)
@@ -823,7 +828,7 @@ class WireClient(object):
             logger.info("Wire protocol version:{0}", PROTOCOL_VERSION)
         elif PROTOCOL_VERSION in version_info.get_supported():
             logger.info("Wire protocol version:{0}", PROTOCOL_VERSION)
-            logger.warn("Server prefered version:{0}", preferred)
+            logger.warn("Server preferred version:{0}", preferred)
         else:
             error = ("Agent supported wire protocol version: {0} was not "
                      "advised by Fabric.").format(PROTOCOL_VERSION)
@@ -982,8 +987,12 @@ class WireClient(object):
             "x-ms-guest-agent-public-x509-cert": cert
         }
 
-    def get_host_plugin(self):
-        if self.host_plugin is None:
+    def get_host_plugin(self, force_update=False):
+        if self.host_plugin is None or force_update:
+            if force_update:
+                logger.warn("Forcing update of goal state")
+                self.goal_state = None
+                self.update_goal_state(forced=True)
             goal_state = self.get_goal_state()
             self.host_plugin = HostPluginProtocol(self.endpoint,
                                                   goal_state.container_id,
@@ -1402,7 +1411,6 @@ class InVMArtifactsProfile(object):
     * encryptedHealthChecks (optional)
     * encryptedApplicationProfile (optional)
     """
-
     def __init__(self, artifacts_profile):
         if not textutil.is_str_none_or_whitespace(artifacts_profile):
             self.__dict__.update(parse_json(artifacts_profile))

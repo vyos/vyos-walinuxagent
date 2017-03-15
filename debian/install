@@ -2,7 +2,7 @@ config/91_walinuxagent.cfg etc/cloud/cloud.cfg.d
 config/66-azure-storage.rules lib/udev/rules.d
 debian/ephemeral-disk-warning.service lib/systemd/system
 debian/ephemeral-disk-warning.conf etc/init
-debian/ephemeral-disk-warning.sh usr/sbin
+debian/ephemeral-disk-warning usr/sbin
 debian/67-azure-console.rules lib/udev/rules.d
 debian/68-azure-nm-unmanaged.rules lib/udev/rules.d
 debian/azure-resource usr/share/initramfs-tools/hooks

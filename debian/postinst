@@ -6,9 +6,10 @@ if [ "$1" = "configure" ]; then
     sed -i 's|^send host-name "<hostname>";|send host-name = gethostname();|g' /etc/dhcp/dhclient.conf
 
     # Trigger update for initramfs (LP: #1514485).
-    [ -x /usr/sbin/update-initramfs ] && update-initramfs -u
+    command -v update-initramfs >/dev/null 2>&1 && update-initramfs -u
     [ -x /etc/kernel/postinst.d/dracut ] && /etc/kernel/postinst.d/dracut $(uname -r)
-
 fi
 
 #DEBHELPER#
+
+exit 0
