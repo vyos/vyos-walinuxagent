@@ -29,6 +29,7 @@ REST api util functions
 """
 
 RETRY_WAITING_INTERVAL = 10
+secure_warning = True
 
 
 def _parse_url(url):
@@ -85,7 +86,7 @@ def _http_request(method, host, rel_uri, port=None, data=None, secure=False,
                                              timeout=10)
             url = rel_uri
 
-    logger.verbose("HTTPConnection [{0}] [{1}] [{2}] [{3}]",
+    logger.verbose("HTTP connection [{0}] [{1}] [{2}] [{3}]",
                    method,
                    url,
                    data,
@@ -104,6 +105,7 @@ def http_request(method, url, data, headers=None, max_retry=3,
     On error, sleep 10 and retry max_retry times.
     """
     host, port, secure, rel_uri = _parse_url(url)
+    global secure_warning
 
     # Check proxy
     proxy_host, proxy_port = (None, None)
@@ -112,24 +114,22 @@ def http_request(method, url, data, headers=None, max_retry=3,
 
     # If httplib module is not built with ssl support. Fallback to http
     if secure and not hasattr(httpclient, "HTTPSConnection"):
-        logger.warn("httplib is not built with ssl support")
         secure = False
+        if secure_warning:
+            logger.warn("httplib is not built with ssl support")
+            secure_warning = False
 
     # If httplib module doesn't support https tunnelling. Fallback to http
     if secure and proxy_host is not None and proxy_port is not None \
             and not hasattr(httpclient.HTTPSConnection, "set_tunnel"):
-        logger.warn("httplib does not support https tunnelling "
-                    "(new in python 2.7)")
         secure = False
+        if secure_warning:
+            logger.warn("httplib does not support https tunnelling "
+                        "(new in python 2.7)")
+            secure_warning = False
 
-    logger.verbose("HTTP method: [{0}]", method)
-    logger.verbose("HTTP host: [{0}]", host)
-    logger.verbose("HTTP uri: [{0}]", rel_uri)
-    logger.verbose("HTTP port: [{0}]", port)
-    logger.verbose("HTTP data: [{0}]", data)
-    logger.verbose("HTTP secure: [{0}]", secure)
-    logger.verbose("HTTP headers: [{0}]", headers)
-    logger.verbose("HTTP proxy: [{0}:{1}]", proxy_host, proxy_port)
+    if proxy_host or proxy_port:
+        logger.verbose("HTTP proxy: [{0}:{1}]", proxy_host, proxy_port)
 
     retry_msg = ''
     log_msg = "HTTP {0}".format(method)
@@ -152,8 +152,14 @@ def http_request(method, url, data, headers=None, max_retry=3,
             retry_interval = 5
         except IOError as e:
             retry_msg = 'IO error: {0} {1}'.format(log_msg, e)
-            retry_interval = 0
-            max_retry = 0
+            # error 101: network unreachable; when the adapter resets we may
+            # see this transient error for a short time, retry once.
+            if e.errno == 101:
+                retry_interval = RETRY_WAITING_INTERVAL
+                max_retry = 1
+            else:
+                retry_interval = 0
+                max_retry = 0
 
         if retry < max_retry:
             logger.info("Retry [{0}/{1} - {3}]",

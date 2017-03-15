@@ -1,3 +1,25 @@
+walinuxagent (2.2.6-0ubuntu1) zesty; urgency=medium
+
+  * New upstream release (LP: #1661750).
+  * debian/control:
+    - Change the maintainer to Ubuntu Developers (LP: #1657528).
+    - Add the dependency of isc-dhcp-client as our maintainer scripts assume
+      it's installed.
+    - Add trailing commas to dependencies, add whitespaces.
+  * Rename ephemeral-disk-warning.sh to ephemeral-disk-warning (lintian error).
+  * debian/docs:
+    - Remove LICENSE.txt as it's redundant.
+  * debian/postinst:
+    - Stop checking for update-initramfs existence using the absolute path, use
+      the 'command' command instead to make lintian happy.
+  * Remove debian/patches/disable-auto-update.patch:
+    - We now ship with auto-updates enabled (LP: #1650522).
+  * debian/maintscript:
+    - Add a maintscript to rename the old logrotate file on upgrade from an
+      ancient version of walinuxagent (LP: #1673152).
+
+ -- Łukasz 'sil2100' Zemczak <lukasz.zemczak@ubuntu.com>  Wed, 15 Mar 2017 10:19:34 +0100
+
 walinuxagent (2.2.2-0ubuntu1) zesty; urgency=medium
 
   * New upstream release (LP: #1651128)

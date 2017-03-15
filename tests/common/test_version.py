@@ -17,29 +17,13 @@
 
 from __future__ import print_function
 
-import copy
-import glob
-import json
-import mock
-import os
-import platform
-import random
-import subprocess
-import sys
-import tempfile
 import textwrap
-import zipfile
 
-from tests.protocol.mockwiredata import *
-from tests.tools import *
+import mock
 
-import azurelinuxagent.common.conf as conf
-import azurelinuxagent.common.logger as logger
-import azurelinuxagent.common.utils.fileutil as fileutil
 import azurelinuxagent.common.version as version
-
-from azurelinuxagent.common.utils.flexible_version import FlexibleVersion
 from azurelinuxagent.common.version import *
+from tests.tools import *
 
 
 class TestCurrentAgentName(AgentTestCase):
@@ -49,6 +33,22 @@ class TestCurrentAgentName(AgentTestCase):
 
     @patch("os.getcwd", return_value="/default/install/directory")
     def test_extract_name_finds_installed(self, mock_cwd):
+        current_agent, current_version = set_current_agent()
+        self.assertEqual(AGENT_LONG_VERSION, current_agent)
+        self.assertEqual(AGENT_VERSION, str(current_version))
+        return
+
+    @patch("os.getcwd", return_value="/")
+    def test_extract_name_root_finds_installed(self, mock_cwd):
+        current_agent, current_version = set_current_agent()
+        self.assertEqual(AGENT_LONG_VERSION, current_agent)
+        self.assertEqual(AGENT_VERSION, str(current_version))
+        return
+
+    @patch("os.getcwd")
+    def test_extract_name_in_path_finds_installed(self, mock_cwd):
+        path = os.path.join(conf.get_lib_dir(), "events")
+        mock_cwd.return_value = path
         current_agent, current_version = set_current_agent()
         self.assertEqual(AGENT_LONG_VERSION, current_agent)
         self.assertEqual(AGENT_VERSION, str(current_version))

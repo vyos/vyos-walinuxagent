@@ -51,7 +51,8 @@ class DefaultOSUtil(object):
 
     def __init__(self):
         self.agent_conf_file_path = '/etc/waagent.conf'
-        self.selinux=None
+        self.selinux = None
+        self.disable_route_warning = False
 
     def get_agent_conf_file_path(self):
         return self.agent_conf_file_path
@@ -438,7 +439,8 @@ class DefaultOSUtil(object):
             iface=sock[i:i+16].split(b'\0', 1)[0]
             if len(iface) == 0 or self.is_loopback(iface) or iface != primary:
                 # test the next one
-                logger.info('interface [{0}] skipped'.format(iface))
+                if len(iface) != 0 and not self.disable_route_warning:
+                    logger.info('interface [{0}] skipped'.format(iface))
                 continue
             else:
                 # use this one
@@ -470,7 +472,8 @@ class DefaultOSUtil(object):
         primary = None
         primary_metric = None
 
-        logger.info("examine /proc/net/route for primary interface")
+        if not self.disable_route_warning:
+            logger.info("examine /proc/net/route for primary interface")
         with open('/proc/net/route') as routing_table:
             idx = 0
             for header in filter(lambda h: len(h) > 0, routing_table.readline().strip(" \n").split("\t")):
@@ -494,10 +497,17 @@ class DefaultOSUtil(object):
 
         if primary is None:
             primary = ''
-
-        logger.info('primary interface is [{0}]'.format(primary))
+            if not self.disable_route_warning:
+                with open('/proc/net/route') as routing_table_fh:
+                    routing_table_text = routing_table_fh.read()
+                    logger.error('could not determine primary interface, '
+                                 'please ensure /proc/net/route is correct:\n'
+                                 '{0}'.format(routing_table_text))
+                    self.disable_route_warning = True
+        else:
+            logger.info('primary interface is [{0}]'.format(primary))
+            self.disable_route_warning = False
         return primary
-
 
     def is_primary_interface(self, ifname):
         """
@@ -507,13 +517,14 @@ class DefaultOSUtil(object):
         """
         return self.get_primary_interface() == ifname
 
-
     def is_loopback(self, ifname):
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
         result = fcntl.ioctl(s.fileno(), 0x8913, struct.pack('256s', ifname[:15]))
         flags, = struct.unpack('H', result[16:18])
         isloopback = flags & 8 == 8
-        logger.info('interface [{0}] has flags [{1}], is loopback [{2}]'.format(ifname, flags, isloopback))
+        if not self.disable_route_warning:
+            logger.info('interface [{0}] has flags [{1}], '
+                        'is loopback [{2}]'.format(ifname, flags, isloopback))
         return isloopback
 
     def get_dhcp_lease_endpoint(self):
@@ -675,6 +686,7 @@ class DefaultOSUtil(object):
 
     def publish_hostname(self, hostname):
         self.set_dhcp_hostname(hostname)
+        self.set_hostname_record(hostname)
         ifname = self.get_if_name()
         self.restart_if(ifname)
 
@@ -725,21 +737,38 @@ class DefaultOSUtil(object):
             port_id = port_id - 2
         device = None
         path = "/sys/bus/vmbus/devices/"
-        for vmbus in os.listdir(path):
-            deviceid = fileutil.read_file(os.path.join(path, vmbus, "device_id"))
-            guid = deviceid.lstrip('{').split('-')
-            if guid[0] == g0 and guid[1] == "000" + ustr(port_id):
-                for root, dirs, files in os.walk(path + vmbus):
-                    if root.endswith("/block"):
-                        device = dirs[0]
-                        break
-                    else : #older distros
-                        for d in dirs:
-                            if ':' in d and "block" == d.split(':')[0]:
-                                device = d.split(':')[1]
-                                break
-                break
+        if os.path.exists(path):
+            for vmbus in os.listdir(path):
+                deviceid = fileutil.read_file(os.path.join(path, vmbus, "device_id"))
+                guid = deviceid.lstrip('{').split('-')
+                if guid[0] == g0 and guid[1] == "000" + ustr(port_id):
+                    for root, dirs, files in os.walk(path + vmbus):
+                        if root.endswith("/block"):
+                            device = dirs[0]
+                            break
+                        else : #older distros
+                            for d in dirs:
+                                if ':' in d and "block" == d.split(':')[0]:
+                                    device = d.split(':')[1]
+                                    break
+                    break
         return device
+
+    def set_hostname_record(self, hostname):
+        fileutil.write_file(conf.get_published_hostname(), contents=hostname)
+
+    def get_hostname_record(self):
+        hostname_record = conf.get_published_hostname()
+        if not os.path.exists(hostname_record):
+            # this file is created at provisioning time with agents >= 2.2.3
+            hostname = socket.gethostname()
+            logger.warn('Hostname record does not exist, '
+                        'creating [{0}] with hostname [{1}]',
+                        hostname_record,
+                        hostname)
+            self.set_hostname_record(hostname)
+        record = fileutil.read_file(hostname_record)
+        return record
 
     def del_account(self, username):
         if self.is_sys_user(username):
@@ -749,10 +778,10 @@ class DefaultOSUtil(object):
         self.conf_sudoer(username, remove=True)
 
     def decode_customdata(self, data):
-        return base64.b64decode(data)
+        return base64.b64decode(data).decode('utf-8')
 
     def get_total_mem(self):
-        # Get total memory in bytes and divide by 1024**2 to get the valu in MB.
+        # Get total memory in bytes and divide by 1024**2 to get the value in MB.
         return os.sysconf('SC_PAGE_SIZE') * os.sysconf('SC_PHYS_PAGES') / (1024**2)
 
     def get_processor_cores(self):

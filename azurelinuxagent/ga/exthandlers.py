@@ -107,7 +107,8 @@ def parse_ext_status(ext_status, data):
     if substatus_list is None:
         return
     for substatus in substatus_list:
-        ext_status.substatusList.append(parse_ext_substatus(substatus))
+        if substatus is not None:
+            ext_status.substatusList.append(parse_ext_substatus(substatus))
 
 # This code migrates, if it exists, handler state and status from an
 # agent-owned directory into the handler-owned config directory
@@ -208,18 +209,18 @@ class ExtHandlersHandler(object):
     def handle_ext_handler(self, ext_handler, etag):
         ext_handler_i = ExtHandlerInstance(ext_handler, self.protocol)
 
-        ext_handler_i.decide_version()
-        if not ext_handler_i.is_upgrade and self.last_etag == etag:
-            if self.log_etag:
-                ext_handler_i.logger.verbose("Version {0} is current for etag {1}",
-                                             ext_handler_i.pkg.version,
-                                             etag)
-                self.log_etag = False
-            return
-
-        self.log_etag = True
-
         try:
+            ext_handler_i.decide_version()
+            if not ext_handler_i.is_upgrade and self.last_etag == etag:
+                if self.log_etag:
+                    ext_handler_i.logger.verbose("Version {0} is current for etag {1}",
+                                                 ext_handler_i.pkg.version,
+                                                 etag)
+                    self.log_etag = False
+                return
+
+            self.log_etag = True
+
             state = ext_handler.properties.state
             ext_handler_i.logger.info("Expected handler state: {0}", state)
             if state == "enabled":
@@ -281,12 +282,8 @@ class ExtHandlersHandler(object):
         ext_handler_i.rm_ext_handler_dir()
     
     def report_ext_handlers_status(self):
-        """Go thru handler_state dir, collect and report status"""
-        vm_status = VMStatus()
-        vm_status.vmAgent.version = str(CURRENT_VERSION)
-        vm_status.vmAgent.status = "Ready"
-        vm_status.vmAgent.message = "Guest Agent is running"
-
+        """Go through handler_state dir, collect and report status"""
+        vm_status = VMStatus(status="Ready", message="Guest Agent is running")
         if self.ext_handlers is not None:
             for ext_handler in self.ext_handlers.extHandlers:
                 try:
@@ -297,7 +294,7 @@ class ExtHandlersHandler(object):
                         version=CURRENT_VERSION,
                         is_success=False,
                         message=ustr(e))
-        
+
         logger.verbose("Report vm agent status")
         try:
             self.protocol.report_vm_status(vm_status)
@@ -330,7 +327,8 @@ class ExtHandlersHandler(object):
                 ext_handler_i.set_handler_status(message=ustr(e), code=-1)
 
         vm_status.vmAgent.extensionHandlers.append(handler_status)
-        
+
+
 class ExtHandlerInstance(object):
     def __init__(self, ext_handler, protocol):
         self.ext_handler = ext_handler
@@ -343,7 +341,7 @@ class ExtHandlerInstance(object):
         self.logger = logger.Logger(logger.DEFAULT_LOGGER, prefix)
         
         try:
-            fileutil.mkdir(self.get_log_dir(), mode=0o744)
+            fileutil.mkdir(self.get_log_dir(), mode=0o755)
         except IOError as e:
             self.logger.error(u"Failed to create extension log dir: {0}", e)
 
@@ -669,7 +667,7 @@ class ExtHandlerInstance(object):
             ext_status.message = u"Failed to get status file {0}".format(e)
             ext_status.code = -1
             ext_status.status = "error"
-        except ValueError as e:
+        except (ExtensionError, ValueError) as e:
             ext_status.message = u"Malformed status file {0}".format(e)
             ext_status.code = -1
             ext_status.status = "error"
@@ -717,7 +715,7 @@ class ExtHandlerInstance(object):
  
     def is_responsive(self, heartbeat_file):
         last_update=int(time.time() - os.stat(heartbeat_file).st_mtime)
-        return  last_update > 600    # not updated for more than 10 min
+        return  last_update <= 600    # updated within the last 10 min
    
     def launch_command(self, cmd, timeout=300):
         self.logger.info("Launch command:{0}", cmd)
@@ -807,6 +805,9 @@ class ExtHandlerInstance(object):
     def set_handler_state(self, handler_state):
         state_dir = self.get_conf_dir()
         try:
+            if not os.path.exists(state_dir):
+                fileutil.mkdir(state_dir, mode=0o700)
+
             state_file = os.path.join(state_dir, "HandlerState")
             fileutil.write_file(state_file, handler_state)
         except IOError as e:

@@ -26,13 +26,13 @@ from azurelinuxagent.common.utils.flexible_version import FlexibleVersion
 from azurelinuxagent.common.future import ustr
 
 
-"""
-Add this workaround for detecting F5 products because BIG-IP/IQ/etc do not show
-their version info in the /etc/product-version location. Instead, the version
-and product information is contained in the /VERSION file.
-"""
 def get_f5_platform():
-    result = [None,None,None,None]
+    """
+    Add this workaround for detecting F5 products because BIG-IP/IQ/etc do
+    not show their version info in the /etc/product-version location. Instead,
+    the version and product information is contained in the /VERSION file.
+    """
+    result = [None, None, None, None]
     f5_version = re.compile("^Version: (\d+\.\d+\.\d+)")
     f5_product = re.compile("^Product: ([\w-]+)")
 
@@ -56,13 +56,15 @@ def get_f5_platform():
                     result[2] = "iworkflow"
     return result
 
+
 def get_distro():
     if 'FreeBSD' in platform.system():
         release = re.sub('\-.*\Z', '', ustr(platform.release()))
         osinfo = ['freebsd', release, '', 'freebsd']
     elif 'linux_distribution' in dir(platform):
+        supported = platform._supported_dists + ('alpine',)
         osinfo = list(platform.linux_distribution(full_distribution_name=0,
-            supported_dists=platform._supported_dists+('alpine',)))
+                                                  supported_dists=supported))
         full_name = platform.linux_distribution()[0].strip()
         osinfo.append(full_name)
     else:
@@ -86,7 +88,7 @@ def get_distro():
 
 AGENT_NAME = "WALinuxAgent"
 AGENT_LONG_NAME = "Azure Linux Agent"
-AGENT_VERSION = '2.2.2'
+AGENT_VERSION = '2.2.6'
 AGENT_LONG_VERSION = "{0}-{1}".format(AGENT_NAME, AGENT_VERSION)
 AGENT_DESCRIPTION = """\
 The Azure Linux Agent supports the provisioning and running of Linux
@@ -104,6 +106,7 @@ AGENT_DIR_PATTERN = re.compile(".*/{0}".format(AGENT_PATTERN))
 EXT_HANDLER_PATTERN = b".*/WALinuxAgent-(\w.\w.\w[.\w]*)-.*-run-exthandlers"
 EXT_HANDLER_REGEX = re.compile(EXT_HANDLER_PATTERN)
 
+
 # Set the CURRENT_AGENT and CURRENT_VERSION to match the agent directory name
 # - This ensures the agent will "see itself" using the same name and version
 #   as the code that downloads agents.
@@ -112,14 +115,18 @@ def set_current_agent():
     lib_dir = conf.get_lib_dir()
     if lib_dir[-1] != os.path.sep:
         lib_dir += os.path.sep
-    if path[:len(lib_dir)] != lib_dir:
+    agent = path[len(lib_dir):].split(os.path.sep)[0]
+    match = AGENT_NAME_PATTERN.match(agent)
+    if match:
+        version = match.group(1)
+    else:
         agent = AGENT_LONG_VERSION
         version = AGENT_VERSION
-    else:
-        agent = path[len(lib_dir):].split(os.path.sep)[0]
-        version = AGENT_NAME_PATTERN.match(agent).group(1)
     return agent, FlexibleVersion(version)
+
+
 CURRENT_AGENT, CURRENT_VERSION = set_current_agent()
+
 
 def set_goal_state_agent():
     agent = None
@@ -136,7 +143,10 @@ def set_goal_state_agent():
     if agent is None:
         agent = CURRENT_VERSION
     return agent
+
+
 GOAL_STATE_AGENT_VERSION = set_goal_state_agent()
+
 
 def is_current_agent_installed():
     return CURRENT_AGENT == AGENT_LONG_VERSION
@@ -153,13 +163,12 @@ PY_VERSION_MAJOR = sys.version_info[0]
 PY_VERSION_MINOR = sys.version_info[1]
 PY_VERSION_MICRO = sys.version_info[2]
 
-"""
-Add this workaround for detecting Snappy Ubuntu Core temporarily, until ubuntu
-fixed this bug: https://bugs.launchpad.net/snappy/+bug/1481086
-"""
-
 
 def is_snappy():
+    """
+    Add this workaround for detecting Snappy Ubuntu Core temporarily,
+    until ubuntu fixed this bug: https://bugs.launchpad.net/snappy/+bug/1481086
+    """
     if os.path.exists("/etc/motd"):
         motd = fileutil.read_file("/etc/motd")
         if "snappy" in motd:
@@ -169,4 +178,3 @@ def is_snappy():
 
 if is_snappy():
     DISTRO_FULL_NAME = "Snappy Ubuntu Core"
-

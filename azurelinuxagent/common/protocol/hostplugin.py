@@ -16,7 +16,6 @@
 #
 # Requires Python 2.4+ and Openssl 1.0+
 #
-
 from azurelinuxagent.common.protocol.wire import *
 from azurelinuxagent.common.utils import textutil
 
@@ -32,6 +31,7 @@ HEADER_HOST_CONFIG_NAME = "x-ms-host-config-name"
 HEADER_ARTIFACT_LOCATION = "x-ms-artifact-location"
 HEADER_ARTIFACT_MANIFEST_LOCATION = "x-ms-artifact-manifest-location"
 
+
 class HostPluginProtocol(object):
     def __init__(self, endpoint, container_id, role_config_name):
         if endpoint is None:
@@ -41,6 +41,7 @@ class HostPluginProtocol(object):
         self.api_versions = None
         self.endpoint = endpoint
         self.container_id = container_id
+        self.deployment_id = None
         self.role_config_name = role_config_name
         self.manifest_uri = None
 
@@ -49,6 +50,11 @@ class HostPluginProtocol(object):
             self.api_versions = self.get_api_versions()
             self.is_available = API_VERSION in self.api_versions
             self.is_initialized = True
+
+            from azurelinuxagent.common.event import add_event, WALAEventOperation
+            add_event(name="WALA",
+                      op=WALAEventOperation.InitializeHostPlugin,
+                      is_success=self.is_available)
         return self.is_available
 
     def get_api_versions(self):
@@ -74,10 +80,10 @@ class HostPluginProtocol(object):
     def get_artifact_request(self, artifact_url, artifact_manifest_url=None):
         if not self.ensure_initialized():
             logger.error("host plugin channel is not available")
-            return
+            return None, None
         if textutil.is_str_none_or_whitespace(artifact_url):
             logger.error("no extension artifact url was provided")
-            return
+            return None, None
 
         url = URI_FORMAT_GET_EXTENSION_ARTIFACT.format(self.endpoint,
                                                        HOST_PLUGIN_PORT)
@@ -121,7 +127,10 @@ class HostPluginProtocol(object):
                                'content': status}, sort_keys=True)
             response = restutil.http_put(url, data=data, headers=headers)
             if response.status != httpclient.OK:
-                logger.error("PUT failed [{0}]", response.status)
+                logger.warn("PUT {0} [{1}: {2}]",
+                            url,
+                            response.status,
+                            response.reason)
             else:
                 logger.verbose("Successfully uploaded status to host plugin")
         except Exception as e:
@@ -140,18 +149,20 @@ class HostPluginProtocol(object):
         if not self.ensure_initialized():
             logger.error("host plugin channel is not available")
             return
-        if content is None or self.goal_state.container_id is None or self.goal_state.deployment_id is None:
+        if content is None \
+                or self.container_id is None \
+                or self.deployment_id is None:
             logger.error(
                 "invalid arguments passed: "
                 "[{0}], [{1}], [{2}]".format(
                     content,
-                    self.goal_state.container_id,
-                    self.goal_state.deployment_id))
+                    self.container_id,
+                    self.deployment_id))
             return
         url = URI_FORMAT_PUT_LOG.format(self.endpoint, HOST_PLUGIN_PORT)
 
-        headers = {"x-ms-vmagentlog-deploymentid": self.goal_state.deployment_id,
-                   "x-ms-vmagentlog-containerid": self.goal_state.container_id}
+        headers = {"x-ms-vmagentlog-deploymentid": self.deployment_id,
+                   "x-ms-vmagentlog-containerid": self.container_id}
         logger.info("put VM log at [{0}]".format(url))
         try:
             response = restutil.http_put(url, content, headers)
