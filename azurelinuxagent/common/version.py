@@ -76,6 +76,9 @@ def get_distro():
         osinfo[2] = "oracle"
         osinfo[3] = "Oracle Linux"
 
+    if os.path.exists("/etc/euleros-release"):
+        osinfo[0] = "euleros"
+
     # The platform.py lib has issue with detecting BIG-IP linux distribution.
     # Merge the following patch provided by F5.
     if os.path.exists("/shared/vadc"):
@@ -88,7 +91,7 @@ def get_distro():
 
 AGENT_NAME = "WALinuxAgent"
 AGENT_LONG_NAME = "Azure Linux Agent"
-AGENT_VERSION = '2.2.6'
+AGENT_VERSION = '2.2.9'
 AGENT_LONG_VERSION = "{0}-{1}".format(AGENT_NAME, AGENT_VERSION)
 AGENT_DESCRIPTION = """\
 The Azure Linux Agent supports the provisioning and running of Linux

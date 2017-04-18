@@ -18,6 +18,7 @@
 
 import multiprocessing
 import os
+import platform
 import re
 import shutil
 import socket
@@ -420,7 +421,12 @@ class DefaultOSUtil(object):
         """
         iface=''
         expected=16 # how many devices should I expect...
-        struct_size=40 # for 64bit the size is 40 bytes
+
+        # for 64bit the size is 40 bytes
+        # for 32bit the size is 32 bytes
+        python_arc = platform.architecture()[0]
+        struct_size = 32 if python_arc == '32bit' else 40
+
         sock = socket.socket(socket.AF_INET,
                              socket.SOCK_DGRAM,
                              socket.IPPROTO_UDP)
@@ -440,11 +446,11 @@ class DefaultOSUtil(object):
             if len(iface) == 0 or self.is_loopback(iface) or iface != primary:
                 # test the next one
                 if len(iface) != 0 and not self.disable_route_warning:
-                    logger.info('interface [{0}] skipped'.format(iface))
+                    logger.info('Interface [{0}] skipped'.format(iface))
                 continue
             else:
                 # use this one
-                logger.info('interface [{0}] selected'.format(iface))
+                logger.info('Interface [{0}] selected'.format(iface))
                 break
 
         return iface.decode('latin-1'), socket.inet_ntoa(sock[i+20:i+24])
@@ -473,7 +479,7 @@ class DefaultOSUtil(object):
         primary_metric = None
 
         if not self.disable_route_warning:
-            logger.info("examine /proc/net/route for primary interface")
+            logger.info("Examine /proc/net/route for primary interface")
         with open('/proc/net/route') as routing_table:
             idx = 0
             for header in filter(lambda h: len(h) > 0, routing_table.readline().strip(" \n").split("\t")):
@@ -500,12 +506,13 @@ class DefaultOSUtil(object):
             if not self.disable_route_warning:
                 with open('/proc/net/route') as routing_table_fh:
                     routing_table_text = routing_table_fh.read()
-                    logger.error('could not determine primary interface, '
-                                 'please ensure /proc/net/route is correct:\n'
-                                 '{0}'.format(routing_table_text))
+                    logger.warn('Could not determine primary interface, '
+                                'please ensure /proc/net/route is correct')
+                    logger.warn('Contents of /proc/net/route:\n{0}'.format(routing_table_text))
+                    logger.warn('Primary interface examination will retry silently')
                     self.disable_route_warning = True
         else:
-            logger.info('primary interface is [{0}]'.format(primary))
+            logger.info('Primary interface is [{0}]'.format(primary))
             self.disable_route_warning = False
         return primary
 
