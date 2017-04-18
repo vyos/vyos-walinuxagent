@@ -27,6 +27,7 @@ import signal
 import subprocess
 import sys
 import time
+import traceback
 import zipfile
 
 import azurelinuxagent.common.conf as conf
@@ -40,6 +41,7 @@ from azurelinuxagent.common.exception import UpdateError, ProtocolError
 from azurelinuxagent.common.future import ustr
 from azurelinuxagent.common.osutil import get_osutil
 from azurelinuxagent.common.protocol import get_protocol_util
+from azurelinuxagent.common.protocol.hostplugin import HostPluginProtocol
 from azurelinuxagent.common.utils.flexible_version import FlexibleVersion
 from azurelinuxagent.common.version import AGENT_NAME, AGENT_VERSION, AGENT_LONG_VERSION, \
                                             AGENT_DIR_GLOB, AGENT_PKG_GLOB, \
@@ -48,7 +50,6 @@ from azurelinuxagent.common.version import AGENT_NAME, AGENT_VERSION, AGENT_LONG
                                             is_current_agent_installed
 
 from azurelinuxagent.ga.exthandlers import HandlerManifest
-
 
 AGENT_ERROR_FILE = "error.json" # File name for agent error record
 AGENT_MANIFEST_FILE = "HandlerManifest.json"
@@ -140,14 +141,24 @@ class UpdateHandler(object):
                 cmds,
                 cwd=agent_dir,
                 stdout=sys.stdout,
-                stderr=sys.stderr)
+                stderr=sys.stderr,
+                env=os.environ)
 
-            logger.info(u"Agent {0} launched with command '{1}'", agent_name, agent_cmd)
+            logger.verbose(u"Agent {0} launched with command '{1}'", agent_name, agent_cmd)
+
+            # If the most current agent is the installed agent and update is enabled,
+            # assume updates are likely available and poll every second.
+            # This reduces the start-up impact of finding / launching agent updates on
+            # fresh VMs.
+            if latest_agent is None and conf.get_autoupdate_enabled():
+                poll_interval = 1
+            else:
+                poll_interval = CHILD_POLL_INTERVAL
 
             ret = None
             start_time = time.time()
             while (time.time() - start_time) < CHILD_HEALTH_INTERVAL:
-                time.sleep(CHILD_POLL_INTERVAL)
+                time.sleep(poll_interval)
                 ret = self.child_process.poll()
                 if ret is not None:
                     break
@@ -249,6 +260,7 @@ class UpdateHandler(object):
 
         except Exception as e:
             logger.warn(u"Agent {0} failed with exception: {1}", CURRENT_AGENT, ustr(e))
+            logger.warn(traceback.format_exc())
             sys.exit(1)
             return
 
@@ -328,7 +340,7 @@ class UpdateHandler(object):
             return False
 
         family = conf.get_autoupdate_gafamily()
-        logger.info("Checking for agent family {0} updates", family)
+        logger.verbose("Checking for agent family {0} updates", family)
 
         self.last_attempt_time = now
         try:
@@ -348,7 +360,7 @@ class UpdateHandler(object):
         manifests = [m for m in manifest_list.vmAgentManifests \
                         if m.family == family and len(m.versionsManifestUris) > 0]
         if len(manifests) == 0:
-            logger.info(u"Incarnation {0} has no agent family {1} updates", etag, family)
+            logger.verbose(u"Incarnation {0} has no agent family {1} updates", etag, family)
             return False
 
         try:
@@ -595,7 +607,7 @@ class GuestAgent(object):
         self.version = FlexibleVersion(version)
 
         location = u"disk" if path is not None else u"package"
-        logger.info(u"Instantiating Agent {0} from {1}", self.name, location)
+        logger.verbose(u"Instantiating Agent {0} from {1}", self.name, location)
 
         self.error = None
         self._load_error()
@@ -651,14 +663,14 @@ class GuestAgent(object):
 
     def _ensure_downloaded(self):
         try:
-            logger.info(u"Ensuring Agent {0} is downloaded", self.name)
+            logger.verbose(u"Ensuring Agent {0} is downloaded", self.name)
 
             if self.is_blacklisted:
-                logger.info(u"Agent {0} is blacklisted - skipping download", self.name)
+                logger.warn(u"Agent {0} is blacklisted - skipping download", self.name)
                 return
 
             if self.is_downloaded:
-                logger.info(u"Agent {0} was previously downloaded - skipping download", self.name)
+                logger.verbose(u"Agent {0} was previously downloaded - skipping download", self.name)
                 self._load_manifest()
                 return
 
@@ -672,7 +684,7 @@ class GuestAgent(object):
             self._load_error()
 
             msg = u"Agent {0} downloaded successfully".format(self.name)
-            logger.info(msg)
+            logger.verbose(msg)
             add_event(
                 AGENT_NAME,
                 version=self.version,
@@ -698,18 +710,24 @@ class GuestAgent(object):
 
     def _download(self):
         for uri in self.pkg.uris:
-            if self._fetch(uri.uri):
+            if not HostPluginProtocol.is_default_channel() and self._fetch(uri.uri):
                 break
-            else:
-                if self.host is not None and self.host.ensure_initialized():
+            elif self.host is not None and self.host.ensure_initialized():
+                if not HostPluginProtocol.is_default_channel():
                     logger.warn("Download unsuccessful, falling back to host plugin")
-                    uri, headers = self.host.get_artifact_request(uri.uri, self.host.manifest_uri)
-                    if uri is not None \
-                            and headers is not None \
-                            and self._fetch(uri, headers=headers):
-                        break
                 else:
-                    logger.warn("Download unsuccessful, host plugin not available")
+                    logger.verbose("Using host plugin as default channel")
+
+                uri, headers = self.host.get_artifact_request(uri.uri, self.host.manifest_uri)
+                if self._fetch(uri, headers=headers):
+                    if not HostPluginProtocol.is_default_channel():
+                        logger.verbose("Setting host plugin as default channel")
+                        HostPluginProtocol.set_default_channel(True)
+                    break
+                else:
+                    logger.warn("Host plugin download unsuccessful")
+            else:
+                logger.error("No download channels available")
 
         if not os.path.isfile(self.get_agent_pkg_path()):
             msg = u"Unable to download Agent {0} from any URI".format(self.name)
@@ -731,7 +749,10 @@ class GuestAgent(object):
                 fileutil.write_file(self.get_agent_pkg_path(),
                                     bytearray(package),
                                     asbin=True)
-                logger.info(u"Agent {0} downloaded from {1}", self.name, uri)
+                logger.verbose(u"Agent {0} downloaded from {1}", self.name, uri)
+            else:
+                logger.verbose("Fetch was unsuccessful [{0}]",
+                               HostPluginProtocol.read_response_error(resp))
         except restutil.HttpError as http_error:
             logger.verbose(u"Agent {0} download from {1} failed [{2}]",
                            self.name,
@@ -744,7 +765,7 @@ class GuestAgent(object):
             if self.error is None:
                 self.error = GuestAgentError(self.get_agent_error_file())
             self.error.load()
-            logger.info(u"Agent {0} error state: {1}", self.name, ustr(self.error))
+            logger.verbose(u"Agent {0} error state: {1}", self.name, ustr(self.error))
         except Exception as e:
             logger.warn(u"Agent {0} failed loading error state: {1}", self.name, ustr(e))
         return
@@ -780,7 +801,7 @@ class GuestAgent(object):
                 ustr(e))
             raise UpdateError(msg)
 
-        logger.info(
+        logger.verbose(
             u"Agent {0} loaded manifest from {1}",
             self.name,
             self.get_agent_manifest_path())
@@ -810,7 +831,7 @@ class GuestAgent(object):
                 self.get_agent_dir())
             raise UpdateError(msg)
 
-        logger.info(
+        logger.verbose(
             u"Agent {0} unpacked successfully to {1}",
             self.name,
             self.get_agent_dir())

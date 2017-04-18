@@ -46,6 +46,7 @@ class WALAEventOperation:
     Install = "Install"
     InitializeHostPlugin = "InitializeHostPlugin"
     Provision = "Provision"
+    ReportStatus = "ReportStatus"
     Restart = "Restart"
     UnhandledError = "UnhandledError"
     UnInstall = "UnInstall"
@@ -65,8 +66,17 @@ class EventLogger(object):
         if not os.path.exists(self.event_dir):
             os.mkdir(self.event_dir)
             os.chmod(self.event_dir, 0o700)
-        if len(os.listdir(self.event_dir)) > 1000:
-            raise EventError("Too many files under: {0}".format(self.event_dir))
+
+        existing_events = os.listdir(self.event_dir)
+        if len(existing_events) >= 1000:
+            existing_events.sort()
+            oldest_files = existing_events[:-999]
+            logger.warn("Too many files under: {0}, removing oldest".format(self.event_dir))
+            try:
+                for f in oldest_files:
+                    os.remove(os.path.join(self.event_dir, f))
+            except IOError as e:
+                raise EventError(e)
 
         filename = os.path.join(self.event_dir,
                                 ustr(int(time.time() * 1000000)))
@@ -99,6 +109,15 @@ class EventLogger(object):
 
 
 __event_logger__ = EventLogger()
+
+
+def report_event(op, is_success=True, message=''):
+    from azurelinuxagent.common.version import AGENT_NAME, CURRENT_VERSION
+    add_event(AGENT_NAME,
+              version=CURRENT_VERSION,
+              is_success=is_success,
+              message=message,
+              op=op)
 
 
 def add_event(name, op="", is_success=True, duration=0, version=CURRENT_VERSION,

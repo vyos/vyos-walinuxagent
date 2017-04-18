@@ -1,3 +1,9 @@
+walinuxagent (2.2.9-0ubuntu1) zesty; urgency=medium
+
+  * New upstream release (LP: #1683521).
+
+ -- Łukasz 'sil2100' Zemczak <lukasz.zemczak@ubuntu.com>  Tue, 18 Apr 2017 12:27:57 +0200
+
 walinuxagent (2.2.6-0ubuntu1) zesty; urgency=medium
 
   * New upstream release (LP: #1661750).
