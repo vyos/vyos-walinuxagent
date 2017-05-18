@@ -24,7 +24,11 @@ import time
 import datetime
 import threading
 import platform
+
+from datetime import datetime
+
 import azurelinuxagent.common.logger as logger
+
 from azurelinuxagent.common.exception import EventError, ProtocolError
 from azurelinuxagent.common.future import ustr
 from azurelinuxagent.common.protocol.restapi import TelemetryEventParam, \
@@ -45,6 +49,7 @@ class WALAEventOperation:
     HeartBeat = "HeartBeat"
     Install = "Install"
     InitializeHostPlugin = "InitializeHostPlugin"
+    ProcessGoalState = "ProcessGoalState"
     Provision = "Provision"
     ReportStatus = "ReportStatus"
     Restart = "Restart"
@@ -111,6 +116,11 @@ class EventLogger(object):
 __event_logger__ = EventLogger()
 
 
+def elapsed_milliseconds(utc_start):
+    d = datetime.utcnow() - utc_start
+    return int(((d.days * 24 * 60 * 60 + d.seconds) * 1000) + \
+                    (d.microseconds / 1000.0))
+
 def report_event(op, is_success=True, message=''):
     from azurelinuxagent.common.version import AGENT_NAME, CURRENT_VERSION
     add_event(AGENT_NAME,
@@ -121,10 +131,11 @@ def report_event(op, is_success=True, message=''):
 
 
 def add_event(name, op="", is_success=True, duration=0, version=CURRENT_VERSION,
-              message="", evt_type="", is_internal=False,
+              message="", evt_type="", is_internal=False, log_event=True,
               reporter=__event_logger__):
-    log = logger.info if is_success else logger.error
-    log("Event: name={0}, op={1}, message={2}", name, op, message)
+    if log_event or not is_success:
+        log = logger.info if is_success else logger.error
+        log("Event: name={0}, op={1}, message={2}", name, op, message)
 
     if reporter.event_dir is None:
         logger.warn("Event reporter is not initialized.")

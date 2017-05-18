@@ -1,13 +1,14 @@
-Index: walinuxagent-2.2.2/config/waagent.conf
-===================================================================
---- walinuxagent-2.2.2.orig/config/waagent.conf
-+++ walinuxagent-2.2.2/config/waagent.conf
-@@ -3,13 +3,13 @@
+--- a/config/waagent.conf
++++ b/config/waagent.conf
+@@ -3,16 +3,16 @@
  #
  
  # Enable instance creation
 -Provisioning.Enabled=y
 +Provisioning.Enabled=n
+ 
+ # Rely on cloud-init to provision
+ Provisioning.UseCloudInit=n
  
  # Password authentication for root account will be unavailable.
 -Provisioning.DeleteRootPassword=y
@@ -19,7 +20,7 @@ Index: walinuxagent-2.2.2/config/waagent.conf
  
  # Supported values are "rsa", "dsa" and "ecdsa".
  Provisioning.SshHostKeyPairType=rsa
-@@ -33,14 +33,14 @@ Provisioning.ExecuteCustomData=n
+@@ -36,14 +36,14 @@
  Provisioning.AllowResetSysUser=n
  
  # Format if unformatted. If 'n', resource disk will not be mounted.

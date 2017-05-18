@@ -18,8 +18,11 @@
 import socket
 import glob
 import mock
+
 import azurelinuxagent.common.osutil.default as osutil
 import azurelinuxagent.common.utils.shellutil as shellutil
+from azurelinuxagent.common.exception import OSUtilError
+from azurelinuxagent.common.future import ustr
 from azurelinuxagent.common.osutil import get_osutil
 from azurelinuxagent.common.utils import fileutil
 from tests.tools import *
@@ -39,6 +42,50 @@ class TestOSUtil(AgentTestCase):
             # assert
             self.assertEqual(run_patch.call_count, retries)
             self.assertEqual(run_patch.call_args_list[0][0][0], 'ifdown {0} && ifup {0}'.format(ifname))
+
+    def test_get_dvd_device_success(self):
+        with patch.object(os, 'listdir', return_value=['cpu', 'cdrom0']):
+            osutil.DefaultOSUtil().get_dvd_device()
+
+    def test_get_dvd_device_failure(self):
+        with patch.object(os, 'listdir', return_value=['cpu', 'notmatching']):
+            try:
+                osutil.DefaultOSUtil().get_dvd_device()
+                self.fail('OSUtilError was not raised')
+            except OSUtilError as ose:
+                self.assertTrue('notmatching' in ustr(ose))
+
+    @patch('time.sleep')
+    def test_mount_dvd_success(self, _):
+        msg = 'message'
+        with patch.object(osutil.DefaultOSUtil,
+                          'get_dvd_device',
+                          return_value='/dev/cdrom'):
+            with patch.object(shellutil,
+                              'run_get_output',
+                              return_value=(0, msg)) as patch_run:
+                with patch.object(os, 'makedirs'):
+                    try:
+                        osutil.DefaultOSUtil().mount_dvd()
+                    except OSUtilError:
+                        self.fail("mounting failed")
+
+    @patch('time.sleep')
+    def test_mount_dvd_failure(self, _):
+        msg = 'message'
+        with patch.object(osutil.DefaultOSUtil,
+                          'get_dvd_device',
+                          return_value='/dev/cdrom'):
+            with patch.object(shellutil,
+                              'run_get_output',
+                              return_value=(1, msg)) as patch_run:
+                with patch.object(os, 'makedirs'):
+                    try:
+                        osutil.DefaultOSUtil().mount_dvd()
+                        self.fail('OSUtilError was not raised')
+                    except OSUtilError as ose:
+                        self.assertTrue(msg in ustr(ose))
+                        self.assertTrue(patch_run.call_count == 6)
 
     def test_get_first_if(self):
         ifname, ipaddr = osutil.DefaultOSUtil().get_first_if()
@@ -314,6 +361,38 @@ Match host 192.168.1.2\n\
                 patch_write.assert_called_once_with(
                     conf.get_sshd_conf_file_path(),
                     expected_output)
+
+    @patch('os.path.isfile', return_value=True)
+    @patch('azurelinuxagent.common.utils.fileutil.read_file',
+            return_value="B9F3C233-9913-9F42-8EB3-BA656DF32502")
+    def test_get_instance_id_from_file(self, mock_read, mock_isfile):
+        util = osutil.DefaultOSUtil()
+        self.assertEqual(
+            "B9F3C233-9913-9F42-8EB3-BA656DF32502",
+            util.get_instance_id())
+
+    @patch('os.path.isfile', return_value=False)
+    @patch('azurelinuxagent.common.utils.shellutil.run_get_output',
+            return_value=[0, 'B9F3C233-9913-9F42-8EB3-BA656DF32502'])
+    def test_get_instance_id_from_dmidecode(self, mock_shell, mock_isfile):
+        util = osutil.DefaultOSUtil()
+        self.assertEqual(
+            "B9F3C233-9913-9F42-8EB3-BA656DF32502",
+            util.get_instance_id())
+
+    @patch('os.path.isfile', return_value=False)
+    @patch('azurelinuxagent.common.utils.shellutil.run_get_output',
+            return_value=[1, 'Error Value'])
+    def test_get_instance_id_missing(self, mock_shell, mock_isfile):
+        util = osutil.DefaultOSUtil()
+        self.assertEqual("", util.get_instance_id())
+
+    @patch('os.path.isfile', return_value=False)
+    @patch('azurelinuxagent.common.utils.shellutil.run_get_output',
+            return_value=[0, 'Unexpected Value'])
+    def test_get_instance_id_unexpected(self, mock_shell, mock_isfile):
+        util = osutil.DefaultOSUtil()
+        self.assertEqual("", util.get_instance_id())
 
 if __name__ == '__main__':
     unittest.main()

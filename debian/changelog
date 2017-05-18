@@ -1,3 +1,10 @@
+walinuxagent (2.2.12-0ubuntu1) artful; urgency=medium
+
+  * New upstream release (LP: #1690854).
+    - Refreshed debian/patches/disable_import_test.patch.
+
+ -- Łukasz 'sil2100' Zemczak <lukasz.zemczak@ubuntu.com>  Thu, 18 May 2017 19:58:02 +0200
+
 walinuxagent (2.2.9-0ubuntu1) zesty; urgency=medium
 
   * New upstream release (LP: #1683521).

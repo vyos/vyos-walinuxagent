@@ -88,6 +88,12 @@ def get_data_files(name, version, fullname):
                 # TODO this is a mitigation to systemctl bug on 7.1
                 set_sysv_files(data_files)
 
+    elif name == 'arch':
+        set_bin_files(data_files, dest="/usr/bin")
+        set_conf_files(data_files, src=["config/arch/waagent.conf"])
+        set_udev_files(data_files)
+        set_systemd_files(data_files, dest='/usr/lib/systemd/system',
+                          src=["init/arch/waagent.service"])
     elif name == 'coreos':
         set_bin_files(data_files, dest="/usr/share/oem/bin")
         set_conf_files(data_files, dest="/usr/share/oem",
@@ -106,7 +112,7 @@ def get_data_files(name, version, fullname):
         set_bin_files(data_files)
         set_conf_files(data_files, src=["config/ubuntu/waagent.conf"])
         set_logrotate_files(data_files)
-        set_udev_files(data_files, src=["config/99-azure-product-uuid.rules"])
+        set_udev_files(data_files)
         if version.startswith("12") or version.startswith("14"):
             # Ubuntu12.04/14.04 - uses upstart
             set_files(data_files, dest="/etc/init",
