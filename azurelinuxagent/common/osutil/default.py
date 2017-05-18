@@ -30,13 +30,15 @@ import fcntl
 import base64
 import glob
 import datetime
+
 import azurelinuxagent.common.logger as logger
 import azurelinuxagent.common.conf as conf
-from azurelinuxagent.common.exception import OSUtilError
-from azurelinuxagent.common.future import ustr
 import azurelinuxagent.common.utils.fileutil as fileutil
 import azurelinuxagent.common.utils.shellutil as shellutil
 import azurelinuxagent.common.utils.textutil as textutil
+
+from azurelinuxagent.common.exception import OSUtilError
+from azurelinuxagent.common.future import ustr
 from azurelinuxagent.common.utils.cryptutil import CryptUtil
 
 __RULES_FILES__ = [ "/lib/udev/rules.d/75-persistent-net-generator.rules",
@@ -48,6 +50,12 @@ for all distros. Each concrete distro classes could overwrite default behavior
 if needed.
 """
 
+DMIDECODE_CMD = 'dmidecode --string system-uuid'
+PRODUCT_ID_FILE = '/sys/class/dmi/id/product_uuid'
+UUID_PATTERN = re.compile(
+    '^\s*[A-F0-9]{8}(?:\-[A-F0-9]{4}){3}\-[A-F0-9]{12}\s*$',
+    re.IGNORECASE)
+
 class DefaultOSUtil(object):
 
     def __init__(self):
@@ -57,6 +65,22 @@ class DefaultOSUtil(object):
 
     def get_agent_conf_file_path(self):
         return self.agent_conf_file_path
+
+    def get_instance_id(self):
+        '''
+        Azure records a UUID as the instance ID
+        First check /sys/class/dmi/id/product_uuid.
+        If that is missing, then extracts from dmidecode
+        If nothing works (for old VMs), return the empty string
+        '''
+        if os.path.isfile(PRODUCT_ID_FILE):
+            return fileutil.read_file(PRODUCT_ID_FILE).strip()
+
+        rc, s = shellutil.run_get_output(DMIDECODE_CMD)
+        if rc != 0 or UUID_PATTERN.match(s) is None:
+            return ""
+
+        return s.strip()
 
     def get_userentry(self, username):
         try:
@@ -110,8 +134,8 @@ class DefaultOSUtil(object):
 
     def chpasswd(self, username, password, crypt_id=6, salt_len=10):
         if self.is_sys_user(username):
-            raise OSUtilError(("User {0} is a system user. "
-                               "Will not set passwd.").format(username))
+            raise OSUtilError(("User {0} is a system user, "
+                               "will not set password.").format(username))
         passwd_hash = textutil.gen_password_hash(password, crypt_id, salt_len)
         cmd = "usermod -p '{0}' {1}".format(passwd_hash, username)
         ret, output = shellutil.run_get_output(cmd, log_cmd=False)
@@ -273,46 +297,65 @@ class DefaultOSUtil(object):
                     .format("Disabled" if disable_password else "Enabled"))
         logger.info("Configured SSH client probing to keep connections alive.")
 
-
     def get_dvd_device(self, dev_dir='/dev'):
-        pattern=r'(sr[0-9]|hd[c-z]|cdrom[0-9]|cd[0-9])'
-        for dvd in [re.match(pattern, dev) for dev in os.listdir(dev_dir)]:
+        pattern = r'(sr[0-9]|hd[c-z]|cdrom[0-9]|cd[0-9])'
+        device_list = os.listdir(dev_dir)
+        for dvd in [re.match(pattern, dev) for dev in device_list]:
             if dvd is not None:
                 return "/dev/{0}".format(dvd.group(0))
-        raise OSUtilError("Failed to get dvd device")
+        inner_detail = "The following devices were found, but none matched " \
+                       "the pattern [{0}]: {1}\n".format(pattern, device_list)
+        raise OSUtilError(msg="Failed to get dvd device from {0}".format(dev_dir),
+                          inner=inner_detail)
 
-    def mount_dvd(self, max_retry=6, chk_err=True, dvd_device=None, mount_point=None):
+    def mount_dvd(self,
+                  max_retry=6,
+                  chk_err=True,
+                  dvd_device=None,
+                  mount_point=None,
+                  sleep_time=5):
         if dvd_device is None:
             dvd_device = self.get_dvd_device()
         if mount_point is None:
             mount_point = conf.get_dvd_mount_point()
-        mountlist = shellutil.run_get_output("mount")[1]
-        existing = self.get_mount_point(mountlist, dvd_device)
-        if existing is not None: #Already mounted
+        mount_list = shellutil.run_get_output("mount")[1]
+        existing = self.get_mount_point(mount_list, dvd_device)
+
+        if existing is not None:
+            # already mounted
             logger.info("{0} is already mounted at {1}", dvd_device, existing)
             return
+
         if not os.path.isdir(mount_point):
             os.makedirs(mount_point)
 
-        for retry in range(0, max_retry):
-            retcode = self.mount(dvd_device, mount_point, option="-o ro -t udf,iso9660",
-                                 chk_err=chk_err)
-            if retcode == 0:
+        err = ''
+        for retry in range(1, max_retry):
+            return_code, err = self.mount(dvd_device,
+                                          mount_point,
+                                          option="-o ro -t udf,iso9660",
+                                          chk_err=chk_err)
+            if return_code == 0:
                 logger.info("Successfully mounted dvd")
                 return
-            if retry < max_retry - 1:
-                logger.warn("Mount dvd failed: retry={0}, ret={1}", retry,
-                            retcode)
-                time.sleep(5)
+            else:
+                logger.warn(
+                    "Mounting dvd failed [retry {0}/{1}, sleeping {2} sec]",
+                    retry,
+                    max_retry - 1,
+                    sleep_time)
+                if retry < max_retry:
+                    time.sleep(sleep_time)
         if chk_err:
-            raise OSUtilError("Failed to mount dvd.")
+            raise OSUtilError("Failed to mount dvd device", inner=err)
 
     def umount_dvd(self, chk_err=True, mount_point=None):
         if mount_point is None:
             mount_point = conf.get_dvd_mount_point()
-        retcode = self.umount(mount_point, chk_err=chk_err)
-        if chk_err and retcode != 0:
-            raise OSUtilError("Failed to umount dvd.")
+        return_code = self.umount(mount_point, chk_err=chk_err)
+        if chk_err and return_code != 0:
+            raise OSUtilError("Failed to unmount dvd device at {0}",
+                              mount_point)
 
     def eject_dvd(self, chk_err=True):
         dvd = self.get_dvd_device()
@@ -356,7 +399,11 @@ class DefaultOSUtil(object):
 
     def mount(self, dvd, mount_point, option="", chk_err=True):
         cmd = "mount {0} {1} {2}".format(option, dvd, mount_point)
-        return shellutil.run_get_output(cmd, chk_err)[0]
+        retcode, err = shellutil.run_get_output(cmd, chk_err)
+        if retcode != 0:
+            detail = "[{0}] returned {1}: {2}".format(cmd, retcode, err)
+            err = detail
+        return retcode, err
 
     def umount(self, mount_point, chk_err=True):
         return shellutil.run("umount {0}".format(mount_point), chk_err=chk_err)

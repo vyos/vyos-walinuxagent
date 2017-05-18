@@ -57,6 +57,22 @@ def get_f5_platform():
     return result
 
 
+def get_checkpoint_platform():
+    take = build = release = ""
+    full_name = open("/etc/cp-release").read().strip()
+    with open("/etc/cloud-version") as f:
+        for line in f:
+            k, _, v = line.partition(": ")
+            v = v.strip()
+            if k == "release":
+                release = v
+            elif k == "take":
+                take = v
+            elif k == "build":
+                build = v
+    return ["gaia", take + "." + build, release, full_name]
+
+
 def get_distro():
     if 'FreeBSD' in platform.system():
         release = re.sub('\-.*\Z', '', ustr(platform.release()))
@@ -84,6 +100,9 @@ def get_distro():
     if os.path.exists("/shared/vadc"):
         osinfo = get_f5_platform()
 
+    if os.path.exists("/etc/cp-release"):
+        osinfo = get_checkpoint_platform()
+
     # Remove trailing whitespace and quote in distro name
     osinfo[0] = osinfo[0].strip('"').strip(' ').lower()
     return osinfo
@@ -91,9 +110,9 @@ def get_distro():
 
 AGENT_NAME = "WALinuxAgent"
 AGENT_LONG_NAME = "Azure Linux Agent"
-AGENT_VERSION = '2.2.9'
+AGENT_VERSION = '2.2.12'
 AGENT_LONG_VERSION = "{0}-{1}".format(AGENT_NAME, AGENT_VERSION)
-AGENT_DESCRIPTION = """\
+AGENT_DESCRIPTION = """
 The Azure Linux Agent supports the provisioning and running of Linux
 VMs in the Azure cloud. This package should be installed on Linux disk
 images that are built to run in the Azure environment.
@@ -104,6 +123,7 @@ AGENT_PKG_GLOB = "{0}-*.zip".format(AGENT_NAME)
 
 AGENT_PATTERN = "{0}-(.*)".format(AGENT_NAME)
 AGENT_NAME_PATTERN = re.compile(AGENT_PATTERN)
+AGENT_PKG_PATTERN = re.compile(AGENT_PATTERN+"\.zip")
 AGENT_DIR_PATTERN = re.compile(".*/{0}".format(AGENT_PATTERN))
 
 EXT_HANDLER_PATTERN = b".*/WALinuxAgent-(\w.\w.\w[.\w]*)-.*-run-exthandlers"
@@ -127,6 +147,13 @@ def set_current_agent():
         version = AGENT_VERSION
     return agent, FlexibleVersion(version)
 
+def is_agent_package(path):
+    path = os.path.basename(path)
+    return not re.match(AGENT_PKG_PATTERN, path) is None
+
+def is_agent_path(path):
+    path = os.path.basename(path)
+    return not re.match(AGENT_NAME_PATTERN, path) is None
 
 CURRENT_AGENT, CURRENT_VERSION = set_current_agent()
 
