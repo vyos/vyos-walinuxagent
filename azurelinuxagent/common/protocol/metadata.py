@@ -113,7 +113,7 @@ class MetadataProtocol(Protocol):
         except HttpError as e:
             raise ProtocolError(ustr(e))
         if resp.status != httpclient.CREATED:
-            raise ProtocolError("{0} - POST: {1}".format(resp.status, url))
+            logger.warn("{0} for POST {1}".format(resp.status, url))
 
     def _get_trans_cert(self):
         trans_crt_file = os.path.join(conf.get_lib_dir(),
@@ -236,14 +236,14 @@ class MetadataProtocol(Protocol):
         return ext_list, etag
 
     def get_ext_handler_pkgs(self, ext_handler):
-        logger.info("Get extension handler packages")
+        logger.verbose("Get extension handler packages")
         pkg_list = ExtHandlerPackageList()
 
         manifest = None
         for version_uri in ext_handler.versionUris:
             try:
                 manifest, etag = self._get_data(version_uri.uri)
-                logger.info("Successfully downloaded manifest")
+                logger.verbose("Successfully downloaded manifest")
                 break
             except ProtocolError as e:
                 logger.warn("Failed to fetch manifest: {0}", e)

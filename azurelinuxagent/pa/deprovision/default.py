@@ -27,9 +27,14 @@ import azurelinuxagent.common.utils.fileutil as fileutil
 import azurelinuxagent.common.utils.shellutil as shellutil
 
 from azurelinuxagent.common.exception import ProtocolError
-from azurelinuxagent.common.future import read_input
 from azurelinuxagent.common.osutil import get_osutil
 from azurelinuxagent.common.protocol import get_protocol_util
+
+def read_input(message):
+    if sys.version_info[0] >= 3:
+        return input(message)
+    else:
+        return raw_input(message)
 
 class DeprovisionAction(object):
     def __init__(self, func, args=[], kwargs={}):
@@ -86,6 +91,15 @@ class DeprovisionHandler(object):
         files = ['/root/.bash_history', '/var/log/waagent.log']
         actions.append(DeprovisionAction(fileutil.rm_files, files))
 
+        # For OpenBSD
+        actions.append(DeprovisionAction(fileutil.rm_files,
+                                         ["/etc/random.seed",
+                                          "/var/db/host.random",
+                                          "/etc/isakmpd/local.pub",
+                                          "/etc/isakmpd/private/local.key",
+                                          "/etc/iked/private/local.key",
+                                          "/etc/iked/local.pub"]))
+
     def del_resolv(self, warnings, actions):
         warnings.append("WARNING! /etc/resolv.conf will be deleted.")
         files_to_del = ["/etc/resolv.conf"]
@@ -96,9 +110,13 @@ class DeprovisionHandler(object):
         dirs_to_del = ["/var/lib/dhclient", "/var/lib/dhcpcd", "/var/lib/dhcp"]
         actions.append(DeprovisionAction(fileutil.rm_dirs, dirs_to_del))
 
-        # For Freebsd, NM controlled
-        actions.append(DeprovisionAction(fileutil.rm_files, ["/var/db/dhclient.leases.hn0",
-                                                             "/var/lib/NetworkManager/dhclient-*.lease"]))
+        # For FreeBSD and OpenBSD
+        actions.append(DeprovisionAction(fileutil.rm_files,
+                                         ["/var/db/dhclient.leases.*"]))
+
+        # For FreeBSD, NM controlled
+        actions.append(DeprovisionAction(fileutil.rm_files,
+                                         ["/var/lib/NetworkManager/dhclient-*.lease"]))
 
 
     def del_lib_dir_files(self, warnings, actions):
@@ -137,23 +155,28 @@ class DeprovisionHandler(object):
             ]
         return dirs
     
-    def cloud_init_files(self, include_once=True):
-        files = [
-            "/etc/sudoers.d/90-cloud-init-users"
-        ]
+    def cloud_init_files(self, include_once=True, deluser=False):
+        files = []
+        if deluser:
+            files += [
+                "/etc/sudoers.d/90-cloud-init-users"
+            ]
         if include_once:
             files += [
                 "/var/lib/cloud/sem/config_scripts_per_once.once"
             ]
         return files
 
-    def del_cloud_init(self, warnings, actions, include_once=True):
+    def del_cloud_init(self, warnings, actions,
+            include_once=True, deluser=False):
         dirs = [d for d in self.cloud_init_dirs(include_once=include_once) \
                     if os.path.isdir(d)]
         if len(dirs) > 0:
             actions.append(DeprovisionAction(fileutil.rm_dirs, dirs))
 
-        files = [f for f in self.cloud_init_files(include_once=include_once) \
+        files = [f for f in self.cloud_init_files(
+                                    include_once=include_once,
+                                    deluser=deluser) \
                     if os.path.isfile(f)]
         if len(files) > 0:
             actions.append(DeprovisionAction(fileutil.rm_files, files))
@@ -179,7 +202,7 @@ class DeprovisionHandler(object):
         if conf.get_delete_root_password():
             self.del_root_password(warnings, actions)
 
-        self.del_cloud_init(warnings, actions)
+        self.del_cloud_init(warnings, actions, deluser=deluser)
         self.del_dirs(warnings, actions)
         self.del_files(warnings, actions)
         self.del_resolv(warnings, actions)
@@ -193,10 +216,10 @@ class DeprovisionHandler(object):
         warnings = []
         actions = []
 
-        self.del_cloud_init(warnings, actions, include_once=False)
+        self.del_cloud_init(warnings, actions,
+                    include_once=False, deluser=False)
         self.del_dhcp_lease(warnings, actions)
         self.del_lib_dir_files(warnings, actions)
-        self.del_resolv(warnings, actions)
 
         return warnings, actions
 
@@ -204,8 +227,8 @@ class DeprovisionHandler(object):
         warnings, actions = self.setup(deluser)
 
         self.do_warnings(warnings)
-        self.do_confirmation(force=force)
-        self.do_actions(actions)
+        if self.do_confirmation(force=force):
+            self.do_actions(actions)
 
     def run_changed_unique_id(self):
         '''
@@ -246,5 +269,3 @@ class DeprovisionHandler(object):
 
         print ('Deprovisioning may not be interrupted.')
         return
-
-

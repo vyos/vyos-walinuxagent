@@ -77,6 +77,9 @@ def get_distro():
     if 'FreeBSD' in platform.system():
         release = re.sub('\-.*\Z', '', ustr(platform.release()))
         osinfo = ['freebsd', release, '', 'freebsd']
+    elif 'OpenBSD' in platform.system():
+        release = re.sub('\-.*\Z', '', ustr(platform.release()))
+        osinfo = ['openbsd', release, '', 'openbsd']
     elif 'linux_distribution' in dir(platform):
         supported = platform._supported_dists + ('alpine',)
         osinfo = list(platform.linux_distribution(full_distribution_name=0,
@@ -110,7 +113,7 @@ def get_distro():
 
 AGENT_NAME = "WALinuxAgent"
 AGENT_LONG_NAME = "Azure Linux Agent"
-AGENT_VERSION = '2.2.12'
+AGENT_VERSION = '2.2.14'
 AGENT_LONG_VERSION = "{0}-{1}".format(AGENT_NAME, AGENT_VERSION)
 AGENT_DESCRIPTION = """
 The Azure Linux Agent supports the provisioning and running of Linux
@@ -160,7 +163,10 @@ CURRENT_AGENT, CURRENT_VERSION = set_current_agent()
 
 def set_goal_state_agent():
     agent = None
-    pids = [pid for pid in os.listdir('/proc') if pid.isdigit()]
+    if os.path.isdir("/proc"):
+        pids = [pid for pid in os.listdir('/proc') if pid.isdigit()]
+    else:
+        pids = []
     for pid in pids:
         try:
             pname = open(os.path.join('/proc', pid, 'cmdline'), 'rb').read()

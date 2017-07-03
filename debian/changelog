@@ -1,3 +1,11 @@
+walinuxagent (2.2.14-0ubuntu1) artful; urgency=medium
+
+  * New upstream release (LP: #1701350).
+  * debian/copyright:
+    - Refreshed copyright content.
+
+ -- Łukasz 'sil2100' Zemczak <lukasz.zemczak@ubuntu.com>  Mon, 03 Jul 2017 13:44:00 +0200
+
 walinuxagent (2.2.12-0ubuntu1) artful; urgency=medium
 
   * New upstream release (LP: #1690854).
