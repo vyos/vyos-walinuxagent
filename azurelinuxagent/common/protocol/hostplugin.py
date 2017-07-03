@@ -70,7 +70,7 @@ class HostPluginProtocol(object):
         if not self.is_initialized:
             self.api_versions = self.get_api_versions()
             self.is_available = API_VERSION in self.api_versions
-            self.is_initialized = True
+            self.is_initialized = self.is_available
             from azurelinuxagent.common.event import WALAEventOperation, report_event
             report_event(WALAEventOperation.InitializeHostPlugin,
                          is_success=self.is_available)
@@ -143,7 +143,9 @@ class HostPluginProtocol(object):
 
         headers = {"x-ms-vmagentlog-deploymentid": self.deployment_id,
                    "x-ms-vmagentlog-containerid": self.container_id}
-        logger.info("HostGAPlugin: Put VM log to [{0}]".format(url))
+        logger.periodic(
+            logger.EVERY_FIFTEEN_MINUTES,
+            "HostGAPlugin: Put VM log to [{0}]".format(url))
         try:
             response = restutil.http_put(url, content, headers)
             if response.status != httpclient.OK:
@@ -175,7 +177,7 @@ class HostPluginProtocol(object):
                 self._put_page_blob_status(sas_url, status_blob)
 
             if not HostPluginProtocol.is_default_channel():
-                logger.info("HostGAPlugin: Setting host plugin as default channel")
+                logger.verbose("HostGAPlugin: Setting host plugin as default channel")
                 HostPluginProtocol.set_default_channel(True)
         except Exception as e:
             message = "HostGAPlugin: Exception Put VM status: {0}, {1}".format(e, traceback.format_exc())
@@ -288,12 +290,23 @@ class HostPluginProtocol(object):
     
     @staticmethod
     def read_response_error(response):
-        if response is None:
-            return ''
-        body = remove_bom(response.read())
-        if PY_VERSION_MAJOR < 3 and body is not None:
-            body = ustr(body, encoding='utf-8')
-        return "{0}, {1}, {2}".format(
-            response.status,
-            response.reason,
-            body)
+        result = ''
+        if response is not None:
+            try:
+                body = remove_bom(response.read())
+                result = "[{0}: {1}] {2}".format(response.status,
+                                                 response.reason,
+                                                 body)
+
+                # this result string is passed upstream to several methods
+                # which do a raise HttpError() or a format() of some kind;
+                # as a result it cannot have any unicode characters
+                if PY_VERSION_MAJOR < 3:
+                    result = ustr(result, encoding='ascii', errors='ignore')
+                else:
+                    result = result\
+                        .encode(encoding='ascii', errors='ignore')\
+                        .decode(encoding='ascii', errors='ignore')
+            except Exception:
+                logger.warn(traceback.format_exc())
+        return result
