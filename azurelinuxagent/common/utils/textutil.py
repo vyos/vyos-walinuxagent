@@ -19,6 +19,7 @@
 import base64
 import crypt
 import random
+import re
 import string
 import struct
 import sys
@@ -259,6 +260,17 @@ def set_ini_config(config, name, val):
         config.insert(length - 1, text)
 
 
+def replace_non_ascii(incoming, replace_char=''):
+    outgoing = ''
+    if incoming is not None:
+        for c in incoming:
+            if str_to_ord(c) > 128:
+                outgoing += replace_char
+            else:
+                outgoing += c
+    return outgoing
+
+
 def remove_bom(c):
     '''
     bom is comprised of a sequence of three chars,0xef, 0xbb, 0xbf, in case of utf-8.
@@ -311,6 +323,16 @@ def safe_shlex_split(s):
         return shlex.split(s.encode('utf-8'))
     return shlex.split(s)
 
+def swap_hexstring(s, width=2):
+    r = len(s) % width
+    if r != 0:
+        s = ('0' * (width - (len(s) % width))) + s
+
+    return ''.join(reversed(
+                        re.findall(
+                                r'[a-f0-9]{{{0}}}'.format(width),
+                                s,
+                                re.IGNORECASE)))
 
 def parse_json(json_str):
     """

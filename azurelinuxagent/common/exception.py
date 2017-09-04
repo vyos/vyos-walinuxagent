@@ -86,7 +86,6 @@ class DhcpError(AgentError):
     def __init__(self, msg=None, inner=None):
         super(DhcpError, self).__init__('000006', msg, inner)
 
-
 class OSUtilError(AgentError):
     """
     Failed to perform operation to OS configuration
@@ -148,3 +147,12 @@ class UpdateError(AgentError):
 
     def __init__(self, msg=None, inner=None):
         super(UpdateError, self).__init__('000012', msg, inner)
+
+
+class ResourceGoneError(HttpError):
+    """
+   The requested resource no longer exists (i.e., status code 410)
+    """
+
+    def __init__(self, msg=None, inner=None):
+        super(ResourceGoneError, self).__init__(msg, inner)

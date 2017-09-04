@@ -41,7 +41,9 @@ import azurelinuxagent.common.utils.textutil as textutil
 from azurelinuxagent.common.event import add_event, add_periodic, \
                                     elapsed_milliseconds, \
                                     WALAEventOperation
-from azurelinuxagent.common.exception import UpdateError, ProtocolError
+from azurelinuxagent.common.exception import ProtocolError, \
+                                            ResourceGoneError, \
+                                            UpdateError
 from azurelinuxagent.common.future import ustr
 from azurelinuxagent.common.osutil import get_osutil
 from azurelinuxagent.common.protocol import get_protocol_util
@@ -231,7 +233,8 @@ class UpdateHandler(object):
         This is the main loop which watches for agent and extension updates.
         """
 
-        logger.info(u"Agent {0} is running as the goal state agent", CURRENT_AGENT)
+        logger.info(u"Agent {0} is running as the goal state agent",
+                    CURRENT_AGENT)
 
         # Launch monitoring threads
         from azurelinuxagent.ga.monitor import get_monitor_handler
@@ -245,14 +248,13 @@ class UpdateHandler(object):
         migrate_handler_state()
 
         try:
-            send_event_time = datetime.utcnow()
-
             self._ensure_no_orphans()
             self._emit_restart_event()
 
             while self.running:
                 if self._is_orphaned:
-                    logger.info("Goal state agent {0} was orphaned -- exiting", CURRENT_AGENT)
+                    logger.info("Goal state agent {0} was orphaned -- exiting",
+                                CURRENT_AGENT)
                     break
 
                 if self._upgrade_available():
@@ -277,23 +279,19 @@ class UpdateHandler(object):
                         duration=elapsed_milliseconds(utc_start),
                         log_event=True)
 
-                test_agent = self.get_test_agent()
-                if test_agent is not None and test_agent.in_slice:
-                    test_agent.enable()
-                    logger.info(u"Enabled Agent {0} as test agent", test_agent.name)
-                    break
-
                 time.sleep(GOAL_STATE_INTERVAL)
 
         except Exception as e:
-            logger.warn(u"Agent {0} failed with exception: {1}", CURRENT_AGENT, ustr(e))
+            logger.warn(u"Agent {0} failed with exception: {1}",
+                        CURRENT_AGENT,
+                        ustr(e))
             logger.warn(traceback.format_exc())
             sys.exit(1)
+            # additional return here because sys.exit is mocked in unit tests
             return
 
         self._shutdown()
         sys.exit(0)
-        return
 
     def forward_signal(self, signum, frame):
         # Note:
@@ -339,14 +337,6 @@ class UpdateHandler(object):
 
         return available_agents[0] if len(available_agents) >= 1 else None
 
-    def get_test_agent(self):
-        agent = None
-        agents = [agent for agent in self._load_agents() if agent.is_test]
-        if len(agents) > 0:
-            agents.sort(key=lambda agent: agent.version, reverse=True)
-            agent = agents[0]
-        return agent
-
     def _emit_restart_event(self):
         if not self._is_clean_start:
             msg = u"{0} did not terminate cleanly".format(CURRENT_AGENT)
@@ -361,81 +351,13 @@ class UpdateHandler(object):
         self._set_sentinal() 
         return
 
-    def _upgrade_available(self, base_version=CURRENT_VERSION):
-        # Ignore new agents if updating is disabled
-        if not conf.get_autoupdate_enabled():
-            return False
-
-        now = time.time()
-        if self.last_attempt_time is not None:
-            next_attempt_time = self.last_attempt_time + conf.get_autoupdate_frequency()
-        else:
-            next_attempt_time = now
-        if next_attempt_time > now:
-            return False
-
-        family = conf.get_autoupdate_gafamily()
-        logger.verbose("Checking for agent family {0} updates", family)
-
-        self.last_attempt_time = now
-        try:
-            protocol = self.protocol_util.get_protocol()
-            manifest_list, etag = protocol.get_vmagent_manifests()
-        except Exception as e:
-            msg = u"Exception retrieving agent manifests: {0}".format(ustr(e))
-            logger.warn(msg)
-            add_event(
-                AGENT_NAME,
-                op=WALAEventOperation.Download,
-                version=CURRENT_VERSION,
-                is_success=False,
-                message=msg)
-            return False
-
-        manifests = [m for m in manifest_list.vmAgentManifests \
-                        if m.family == family and len(m.versionsManifestUris) > 0]
-        if len(manifests) == 0:
-            logger.verbose(u"Incarnation {0} has no agent family {1} updates", etag, family)
-            return False
-
-        try:
-            pkg_list = protocol.get_vmagent_pkgs(manifests[0])
-        except ProtocolError as e:
-            msg = u"Incarnation {0} failed to get {1} package list: " \
-                  u"{2}".format(
-                etag,
-                family,
-                ustr(e))
-            logger.warn(msg)
-            add_event(
-                AGENT_NAME,
-                op=WALAEventOperation.Download,
-                version=CURRENT_VERSION,
-                is_success=False,
-                message=msg)
-            return False
-
-        # Set the agents to those available for download at least as current
-        # as the existing agent and remove from disk any agent no longer
-        # reported to the VM.
-        # Note:
-        #  The code leaves on disk available, but blacklisted, agents so as to
-        #  preserve the state. Otherwise, those agents could be again
-        #  downloaded and inappropriately retried.
-        host = self._get_host_plugin(protocol=protocol)
-        self._set_agents([GuestAgent(pkg=pkg, host=host) for pkg in pkg_list.versions])
-        self._purge_agents()
-        self._filter_blacklisted_agents()
-
-        # Return True if agents more recent than the current are available
-        return len(self.agents) > 0 and self.agents[0].version > base_version
-
     def _ensure_no_orphans(self, orphan_wait_interval=ORPHAN_WAIT_INTERVAL):
-        previous_pid_file, pid_file = self._write_pid_file()
-        if previous_pid_file is not None:
+        pid_files, ignored = self._write_pid_file()
+        for pid_file in pid_files:
             try:
-                pid = fileutil.read_file(previous_pid_file)
+                pid = fileutil.read_file(pid_file)
                 wait_interval = orphan_wait_interval
+
                 while self.osutil.check_pid_alive(pid):
                     wait_interval -= GOAL_STATE_INTERVAL
                     if wait_interval <= 0:
@@ -451,6 +373,8 @@ class UpdateHandler(object):
                         CURRENT_AGENT,
                         pid)
                     time.sleep(GOAL_STATE_INTERVAL)
+
+                os.remove(pid_file)
 
             except Exception as e:
                 logger.warn(
@@ -508,22 +432,18 @@ class UpdateHandler(object):
                                     protocol.client \
                                 else None
 
-    def _get_pid_files(self):
+    def _get_pid_parts(self):
         pid_file = conf.get_agent_pid_file_path()
-        
         pid_dir = os.path.dirname(pid_file)
         pid_name = os.path.basename(pid_file)
-        
         pid_re = re.compile("(\d+)_{0}".format(re.escape(pid_name)))
-        pid_files = [int(pid_re.match(f).group(1)) for f in os.listdir(pid_dir) if pid_re.match(f)]
-        pid_files.sort()
+        return pid_dir, pid_name, pid_re
 
-        pid_index = -1 if len(pid_files) <= 0 else pid_files[-1]
-        previous_pid_file = None \
-                        if pid_index < 0 \
-                        else os.path.join(pid_dir, "{0}_{1}".format(pid_index, pid_name))
-        pid_file = os.path.join(pid_dir, "{0}_{1}".format(pid_index+1, pid_name))
-        return previous_pid_file, pid_file
+    def _get_pid_files(self):
+        pid_dir, pid_name, pid_re = self._get_pid_parts()
+        pid_files = [os.path.join(pid_dir, f) for f in os.listdir(pid_dir) if pid_re.match(f)]
+        pid_files.sort(key=lambda f: int(pid_re.match(os.path.basename(f)).group(1)))
+        return pid_files
 
     @property
     def _is_clean_start(self):
@@ -619,8 +539,98 @@ class UpdateHandler(object):
                 str(e))
         return
 
+    def _upgrade_available(self, base_version=CURRENT_VERSION):
+        # Emit an event expressing the state of AutoUpdate
+        # Note:
+        # - Duplicate events get suppressed; state transitions always emit
+        add_event(
+            AGENT_NAME,
+            version=CURRENT_VERSION,
+            op=WALAEventOperation.AutoUpdate,
+            is_success=conf.get_autoupdate_enabled())
+
+        # Ignore new agents if updating is disabled
+        if not conf.get_autoupdate_enabled():
+            return False
+
+        now = time.time()
+        if self.last_attempt_time is not None:
+            next_attempt_time = self.last_attempt_time + \
+                                    conf.get_autoupdate_frequency()
+        else:
+            next_attempt_time = now
+        if next_attempt_time > now:
+            return False
+
+        family = conf.get_autoupdate_gafamily()
+        logger.verbose("Checking for agent family {0} updates", family)
+
+        self.last_attempt_time = now
+        protocol = self.protocol_util.get_protocol()
+
+        for update_goal_state in [False, True]:
+            try:
+                if update_goal_state:
+                    protocol.update_goal_state(forced=True)
+
+                manifest_list, etag = protocol.get_vmagent_manifests()
+
+                manifests = [m for m in manifest_list.vmAgentManifests \
+                                if m.family == family and \
+                                    len(m.versionsManifestUris) > 0]
+                if len(manifests) == 0:
+                    logger.verbose(u"Incarnation {0} has no {1} agent updates",
+                                    etag, family)
+                    return False
+
+                pkg_list = protocol.get_vmagent_pkgs(manifests[0])
+
+                # Set the agents to those available for download at least as
+                # current as the existing agent and remove from disk any agent
+                # no longer reported to the VM.
+                # Note:
+                #  The code leaves on disk available, but blacklisted, agents
+                #  so as to preserve the state. Otherwise, those agents could be
+                #  again downloaded and inappropriately retried.
+                host = self._get_host_plugin(protocol=protocol)
+                self._set_agents([GuestAgent(pkg=pkg, host=host) \
+                                     for pkg in pkg_list.versions])
+
+                self._purge_agents()
+                self._filter_blacklisted_agents()
+
+                # Return True if more recent agents are available
+                return len(self.agents) > 0 and \
+                            self.agents[0].version > base_version
+
+            except Exception as e:
+                if isinstance(e, ResourceGoneError):
+                    continue
+
+                msg = u"Exception retrieving agent manifests: {0}".format(
+                            ustr(e))
+                logger.warn(msg)
+                add_event(
+                    AGENT_NAME,
+                    op=WALAEventOperation.Download,
+                    version=CURRENT_VERSION,
+                    is_success=False,
+                    message=msg)
+                return False
+
     def _write_pid_file(self):
-        previous_pid_file, pid_file = self._get_pid_files()
+        pid_files = self._get_pid_files()
+
+        pid_dir, pid_name, pid_re = self._get_pid_parts()
+
+        previous_pid_file = None \
+                        if len(pid_files) <= 0 \
+                        else pid_files[-1]
+        pid_index = -1 \
+                    if previous_pid_file is None \
+                    else int(pid_re.match(os.path.basename(previous_pid_file)).group(1))
+        pid_file = os.path.join(pid_dir, "{0}_{1}".format(pid_index+1, pid_name))
+
         try:
             fileutil.write_file(pid_file, ustr(os.getpid()))
             logger.info(u"{0} running as process {1}", CURRENT_AGENT, ustr(os.getpid()))
@@ -631,7 +641,8 @@ class UpdateHandler(object):
                 CURRENT_AGENT,
                 pid_file,
                 ustr(e))
-        return previous_pid_file, pid_file
+
+        return pid_files, pid_file
 
 
 class GuestAgent(object):
@@ -652,15 +663,34 @@ class GuestAgent(object):
         self.version = FlexibleVersion(version)
 
         location = u"disk" if path is not None else u"package"
-        logger.verbose(u"Loading Agent {0} from package {1}", self.name, location)
+        logger.verbose(u"Loading Agent {0} from {1}", self.name, location)
 
-        self.error = None
-        self.supported = None
+        self.error = GuestAgentError(self.get_agent_error_file())
+        self.error.load()
+        self.supported = Supported(self.get_agent_supported_file())
+        self.supported.load()
 
-        self._load_error()
-        self._load_supported()
+        try:
+            self._ensure_downloaded()
+            self._ensure_loaded()
+        except Exception as e:
+            if isinstance(e, ResourceGoneError):
+                raise
 
-        self._ensure_downloaded()
+            # Note the failure, blacklist the agent if the package downloaded
+            # - An exception with a downloaded package indicates the package
+            #   is corrupt (e.g., missing the HandlerManifest.json file)
+            self.mark_failure(is_fatal=os.path.isfile(self.get_agent_pkg_path()))
+
+            msg = u"Agent {0} install failed with exception: {1}".format(
+                        self.name, ustr(e))
+            logger.warn(msg)
+            add_event(
+                AGENT_NAME,
+                version=self.version,
+                op=WALAEventOperation.Install,
+                is_success=False,
+                message=msg)
         return
 
     @property
@@ -687,12 +717,7 @@ class GuestAgent(object):
 
     def clear_error(self):
         self.error.clear()
-        return
-
-    def enable(self):
-        if self.error.is_sentinel:
-            self.error.clear()
-            self.error.save()
+        self.error.save()
         return
 
     @property
@@ -708,12 +733,12 @@ class GuestAgent(object):
         return self.is_blacklisted or os.path.isfile(self.get_agent_manifest_path())
 
     @property
-    def is_test(self):
-        return self.error.is_sentinel and self.supported.is_supported
+    def _is_optional(self):
+        return self.error is not None and self.error.is_sentinel and self.supported.is_supported
 
     @property
-    def in_slice(self):
-        return self.is_test and self.supported.in_slice
+    def _in_slice(self):
+        return self.supported.is_supported and self.supported.in_slice
 
     def mark_failure(self, is_fatal=False):
         try:
@@ -727,72 +752,79 @@ class GuestAgent(object):
             logger.warn(u"Agent {0} failed recording error state: {1}", self.name, ustr(e))
         return
 
+    def _enable(self):
+        # Enable optional agents if within the "slice"
+        # - The "slice" is a percentage of the agent to execute
+        # - Blacklist out-of-slice agents to prevent reconsideration
+        if self._is_optional:
+            if self._in_slice:
+                self.error.clear()
+                self.error.save()
+                logger.info(u"Enabled optional Agent {0}", self.name)
+            else:
+                self.mark_failure(is_fatal=True)
+                logger.info(u"Optional Agent {0} not in slice", self.name)
+        return
+
     def _ensure_downloaded(self):
-        try:
-            logger.verbose(u"Ensuring Agent {0} is downloaded", self.name)
+        logger.verbose(u"Ensuring Agent {0} is downloaded", self.name)
 
-            if self.is_blacklisted:
-                logger.verbose(u"Agent {0} is blacklisted - skipping download", self.name)
-                return
+        if self.is_downloaded:
+            logger.verbose(u"Agent {0} was previously downloaded - skipping download", self.name)
+            return
 
-            if self.is_downloaded:
-                logger.verbose(u"Agent {0} was previously downloaded - skipping download", self.name)
-                self._load_manifest()
-                return
+        if self.pkg is None:
+            raise UpdateError(u"Agent {0} is missing package and download URIs".format(
+                self.name))
+        
+        self._download()
+        self._unpack()
 
-            if self.pkg is None:
-                raise UpdateError(u"Agent {0} is missing package and download URIs".format(
-                    self.name))
-            
-            self._download()
-            self._unpack()
-            self._load_manifest()
-            self._load_error()
-            self._load_supported()
+        msg = u"Agent {0} downloaded successfully".format(self.name)
+        logger.verbose(msg)
+        add_event(
+            AGENT_NAME,
+            version=self.version,
+            op=WALAEventOperation.Install,
+            is_success=True,
+            message=msg)
+        return
 
-            msg = u"Agent {0} downloaded successfully".format(self.name)
-            logger.verbose(msg)
-            add_event(
-                AGENT_NAME,
-                version=self.version,
-                op=WALAEventOperation.Install,
-                is_success=True,
-                message=msg)
+    def _ensure_loaded(self):
+        self._load_manifest()
+        self._load_error()
+        self._load_supported()
 
-        except Exception as e:
-            # Note the failure, blacklist the agent if the package downloaded
-            # - An exception with a downloaded package indicates the package
-            #   is corrupt (e.g., missing the HandlerManifest.json file)
-            self.mark_failure(is_fatal=os.path.isfile(self.get_agent_pkg_path()))
-
-            msg = u"Agent {0} download failed with exception: {1}".format(self.name, ustr(e))
-            logger.warn(msg)
-            add_event(
-                AGENT_NAME,
-                version=self.version,
-                op=WALAEventOperation.Install,
-                is_success=False,
-                message=msg)
+        self._enable()
         return
 
     def _download(self):
         for uri in self.pkg.uris:
             if not HostPluginProtocol.is_default_channel() and self._fetch(uri.uri):
                 break
+
             elif self.host is not None and self.host.ensure_initialized():
                 if not HostPluginProtocol.is_default_channel():
-                    logger.warn("Download unsuccessful, falling back to host plugin")
+                    logger.warn("Download failed, switching to host plugin")
                 else:
                     logger.verbose("Using host plugin as default channel")
 
                 uri, headers = self.host.get_artifact_request(uri.uri, self.host.manifest_uri)
-                if self._fetch(uri, headers=headers):
-                    if not HostPluginProtocol.is_default_channel():
-                        logger.verbose("Setting host plugin as default channel")
-                        HostPluginProtocol.set_default_channel(True)
-                    break
-                else:
-                    logger.warn("Host plugin download unsuccessful")
+                try:
+                    if self._fetch(uri, headers=headers, use_proxy=False):
+                        if not HostPluginProtocol.is_default_channel():
+                            logger.verbose("Setting host plugin as default channel")
+                            HostPluginProtocol.set_default_channel(True)
+                        break
+                    else:
+                        logger.warn("Host plugin download failed")
+
+                # If the HostPlugin rejects the request,
+                # let the error continue, but set to use the HostPlugin
+                except ResourceGoneError:
+                    HostPluginProtocol.set_default_channel(True)
+                    raise
+
             else:
                 logger.error("No download channels available")
 
@@ -805,13 +837,14 @@ class GuestAgent(object):
                 is_success=False,
                 message=msg)
             raise UpdateError(msg)
+
         return
 
-    def _fetch(self, uri, headers=None):
+    def _fetch(self, uri, headers=None, use_proxy=True):
         package = None
         try:
-            resp = restutil.http_get(uri, chk_proxy=True, headers=headers)
-            if resp.status == restutil.httpclient.OK:
+            resp = restutil.http_get(uri, use_proxy=use_proxy, headers=headers)
+            if restutil.request_succeeded(resp):
                 package = resp.read()
                 fileutil.write_file(self.get_agent_pkg_path(),
                                     bytearray(package),
@@ -819,18 +852,21 @@ class GuestAgent(object):
                 logger.verbose(u"Agent {0} downloaded from {1}", self.name, uri)
             else:
                 logger.verbose("Fetch was unsuccessful [{0}]",
-                               HostPluginProtocol.read_response_error(resp))
+                               restutil.read_response_error(resp))
         except restutil.HttpError as http_error:
+            if isinstance(http_error, ResourceGoneError):
+                raise
+
             logger.verbose(u"Agent {0} download from {1} failed [{2}]",
                            self.name,
                            uri,
                            http_error)
+
         return package is not None
 
     def _load_error(self):
         try:
-            if self.error is None:
-                self.error = GuestAgentError(self.get_agent_error_file())
+            self.error = GuestAgentError(self.get_agent_error_file())
             self.error.load()
             logger.verbose(u"Agent {0} error state: {1}", self.name, ustr(self.error))
         except Exception as e:
@@ -840,6 +876,7 @@ class GuestAgent(object):
     def _load_supported(self):
         try:
             self.supported = Supported(self.get_agent_supported_file())
+            self.supported.load()
         except Exception as e:
             self.supported = Supported()
 
@@ -892,6 +929,9 @@ class GuestAgent(object):
             zipfile.ZipFile(self.get_agent_pkg_path()).extractall(self.get_agent_dir())
 
         except Exception as e:
+            fileutil.clean_ioerror(e,
+                paths=[self.get_agent_dir(), self.get_agent_pkg_path()])
+
             msg = u"Exception unpacking Agent {0} from {1}: {2}".format(
                 self.name,
                 self.get_agent_pkg_path(),
@@ -918,7 +958,6 @@ class GuestAgentError(object):
         self.path = path
 
         self.clear()
-        self.load()
         return
    
     def mark_failure(self, is_fatal=False):
@@ -982,8 +1021,7 @@ class Supported(object):
         if path is None:
             raise UpdateError(u"Supported requires a path")
         self.path = path
-
-        self._load()
+        self.distributions = {}
         return
 
     @property
@@ -995,15 +1033,7 @@ class Supported(object):
         d = self._supported_distribution
         return d is not None and d.in_slice
 
-    @property
-    def _supported_distribution(self):
-        for d in self.distributions:
-            dd = self.distributions[d]
-            if dd.is_supported:
-                return dd
-        return None
-
-    def _load(self):
+    def load(self):
         self.distributions = {}
         try:
             if self.path is not None and os.path.isfile(self.path):
@@ -1013,6 +1043,14 @@ class Supported(object):
         except Exception as e:
             logger.warn("Failed JSON parse of {0}: {1}".format(self.path, e))
         return
+
+    @property
+    def _supported_distribution(self):
+        for d in self.distributions:
+            dd = self.distributions[d]
+            if dd.is_supported:
+                return dd
+        return None
 
 class SupportedDistribution(object):
     def __init__(self, s):

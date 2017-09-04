@@ -64,7 +64,19 @@ class Agent(object):
         logger.add_logger_appender(logger.AppenderType.CONSOLE, level,
                                  path="/dev/console")
 
+        ext_log_dir = conf.get_ext_log_dir()
+        try:
+            if os.path.isfile(ext_log_dir):
+                raise Exception("{0} is a file".format(ext_log_dir))
+            if not os.path.isdir(ext_log_dir):
+                os.makedirs(ext_log_dir)
+        except Exception as e:
+            logger.error(
+                "Exception occurred while creating extension "
+                "log directory {0}: {1}".format(ext_log_dir, e))
+
         #Init event reporter
+        event.init_event_status(conf.get_lib_dir())
         event_dir = os.path.join(conf.get_lib_dir(), "events")
         event.init_event_logger(event_dir)
         event.enable_unhandled_err_dump("WALA")
@@ -116,6 +128,11 @@ class Agent(object):
         update_handler = get_update_handler()
         update_handler.run()
 
+    def show_configuration(self):
+        configuration = conf.get_configuration()
+        for k in sorted(configuration.keys()):
+            print("{0} = {1}".format(k, configuration[k]))
+
 def main(args=[]):
     """
     Parse command line arguments, exit with usage() on error.
@@ -145,6 +162,8 @@ def main(args=[]):
                 agent.daemon()
             elif command == "run-exthandlers":
                 agent.run_exthandlers()
+            elif command == "show-configuration":
+                agent.show_configuration()
         except Exception:
             logger.error(u"Failed to run '{0}': {1}",
                          command,
@@ -186,6 +205,8 @@ def parse_args(sys_args):
             verbose = True
         elif re.match("^([-/]*)force", a):
             force = True
+        elif re.match("^([-/]*)show-configuration", a):
+            cmd = "show-configuration"
         elif re.match("^([-/]*)(help|usage|\\?)", a):
             cmd = "help"
         else:

@@ -27,6 +27,7 @@ import platform
 
 from datetime import datetime, timedelta
 
+import azurelinuxagent.common.conf as conf
 import azurelinuxagent.common.logger as logger
 
 from azurelinuxagent.common.exception import EventError, ProtocolError
@@ -39,13 +40,15 @@ from azurelinuxagent.common.version import DISTRO_NAME, DISTRO_VERSION, \
     DISTRO_CODE_NAME, AGENT_VERSION, \
     CURRENT_AGENT, CURRENT_VERSION
 
-_EVENT_MSG = "Event: name={0}, op={1}, message={2}"
+_EVENT_MSG = "Event: name={0}, op={1}, message={2}, duration={3}"
 
 class WALAEventOperation:
     ActivateResourceDisk = "ActivateResourceDisk"
+    AutoUpdate = "AutoUpdate"
     Disable = "Disable"
     Download = "Download"
     Enable = "Enable"
+    Firewall = "Firewall"
     HealthCheck = "HealthCheck"
     HeartBeat = "HeartBeat"
     HostPlugin = "HostPlugin"
@@ -60,13 +63,70 @@ class WALAEventOperation:
     Upgrade = "Upgrade"
     Update = "Update"
 
-def _log_event(name, op, message, is_success=True):
+
+class EventStatus(object):
+    EVENT_STATUS_FILE = "event_status.json"
+
+    def __init__(self, status_dir=conf.get_lib_dir()):
+        self._path = None
+        self._status = {}
+
+    def clear(self):
+        self._status = {}
+        self._save()
+
+    def event_marked(self, name, version, op):
+        return self._event_name(name, version, op) in self._status
+
+    def event_succeeded(self, name, version, op):
+        event = self._event_name(name, version, op)
+        if event not in self._status:
+            return True
+        return self._status[event] == True
+
+    def initialize(self, status_dir=conf.get_lib_dir()):
+        self._path = os.path.join(status_dir, EventStatus.EVENT_STATUS_FILE)
+        self._load()
+
+    def mark_event_status(self, name, version, op, status):
+        event = self._event_name(name, version, op)
+        self._status[event] = (status == True)
+        self._save()
+
+    def _event_name(self, name, version, op):
+        return "{0}-{1}-{2}".format(name, version, op)
+
+    def _load(self):
+        try:
+            self._status = {}
+            if os.path.isfile(self._path):
+                with open(self._path, 'r') as f:
+                    self._status = json.load(f)
+        except Exception as e:
+            logger.warn("Exception occurred loading event status: {0}".format(e))
+            self._status = {}
+
+    def _save(self):
+        try:
+            with open(self._path, 'w') as f:
+                json.dump(self._status, f)
+        except Exception as e:
+            logger.warn("Exception occurred saving event status: {0}".format(e))
+
+__event_status__ = EventStatus()
+__event_status_operations__ = [
+        WALAEventOperation.AutoUpdate,
+        WALAEventOperation.ReportStatus
+    ]
+
+
+def _log_event(name, op, message, duration, is_success=True):
     global _EVENT_MSG
 
     if not is_success:
-        logger.error(_EVENT_MSG, name, op, message)
+        logger.error(_EVENT_MSG, name, op, message, duration)
     else:
-        logger.info(_EVENT_MSG, name, op, message)
+        logger.info(_EVENT_MSG, name, op, message, duration)
 
 
 class EventLogger(object):
@@ -76,7 +136,7 @@ class EventLogger(object):
 
     def save_event(self, data):
         if self.event_dir is None:
-            logger.warn("Event reporter is not initialized.")
+            logger.warn("Cannot save event -- Event reporter is not initialized.")
             return
 
         if not os.path.exists(self.event_dir):
@@ -104,11 +164,11 @@ class EventLogger(object):
             raise EventError("Failed to write events to file:{0}", e)
 
     def reset_periodic(self):
-        self.periodic_messages = {}
+        self.periodic_events = {}
 
     def is_period_elapsed(self, delta, h):
-        return h not in self.periodic_messages or \
-            (self.periodic_messages[h] + delta) <= datetime.now()
+        return h not in self.periodic_events or \
+            (self.periodic_events[h] + delta) <= datetime.now()
 
     def add_periodic(self,
         delta, name, op="", is_success=True, duration=0,
@@ -122,13 +182,21 @@ class EventLogger(object):
                 op=op, is_success=is_success, duration=duration,
                 version=version, message=message, evt_type=evt_type,
                 is_internal=is_internal, log_event=log_event)
-            self.periodic_messages[h] = datetime.now()
+            self.periodic_events[h] = datetime.now()
 
-    def add_event(self, name, op="", is_success=True, duration=0,
+    def add_event(self,
+                  name,
+                  op="",
+                  is_success=True,
+                  duration=0,
                   version=CURRENT_VERSION,
-                  message="", evt_type="", is_internal=False, log_event=True):
+                  message="",
+                  evt_type="",
+                  is_internal=False,
+                  log_event=True):
+
         if not is_success or log_event:
-            _log_event(name, op, message, is_success=is_success)
+            _log_event(name, op, message, duration, is_success=is_success)
 
         event = TelemetryEvent(1, "69B669B9-4AF8-4C50-BDC4-6006FA76E975")
         event.parameters.append(TelemetryEventParam('Name', name))
@@ -176,22 +244,24 @@ def add_event(name, op="", is_success=True, duration=0, version=CURRENT_VERSION,
               message="", evt_type="", is_internal=False, log_event=True,
               reporter=__event_logger__):
     if reporter.event_dir is None:
-        logger.warn("Event reporter is not initialized.")
-        _log_event(name, op, message, is_success=is_success)
+        logger.warn("Cannot add event -- Event reporter is not initialized.")
+        _log_event(name, op, message, duration, is_success=is_success)
         return
 
-    reporter.add_event(
-        name, op=op, is_success=is_success, duration=duration,
-        version=str(version), message=message, evt_type=evt_type,
-        is_internal=is_internal, log_event=log_event)
+    if should_emit_event(name, version, op, is_success):
+        mark_event_status(name, version, op, is_success)
+        reporter.add_event(
+            name, op=op, is_success=is_success, duration=duration,
+            version=str(version), message=message, evt_type=evt_type,
+            is_internal=is_internal, log_event=log_event)
 
 def add_periodic(
     delta, name, op="", is_success=True, duration=0, version=CURRENT_VERSION,
     message="", evt_type="", is_internal=False, log_event=True, force=False,
     reporter=__event_logger__):
     if reporter.event_dir is None:
-        logger.warn("Event reporter is not initialized.")
-        _log_event(name, op, message, is_success=is_success)
+        logger.warn("Cannot add periodic event -- Event reporter is not initialized.")
+        _log_event(name, op, message, duration, is_success=is_success)
         return
 
     reporter.add_periodic(
@@ -199,9 +269,22 @@ def add_periodic(
         version=str(version), message=message, evt_type=evt_type,
         is_internal=is_internal, log_event=log_event, force=force)
 
-def init_event_logger(event_dir, reporter=__event_logger__):
-    reporter.event_dir = event_dir
+def mark_event_status(name, version, op, status):
+    if op in __event_status_operations__:
+        __event_status__.mark_event_status(name, version, op, status)
 
+def should_emit_event(name, version, op, status):
+    return \
+        op not in __event_status_operations__ or \
+        __event_status__ is None or \
+        not __event_status__.event_marked(name, version, op) or \
+        __event_status__.event_succeeded(name, version, op) != status
+
+def init_event_logger(event_dir):
+    __event_logger__.event_dir = event_dir
+
+def init_event_status(status_dir):
+    __event_status__.initialize(status_dir)
 
 def dump_unhandled_err(name):
     if hasattr(sys, 'last_type') and hasattr(sys, 'last_value') and \
