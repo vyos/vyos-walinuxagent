@@ -15,6 +15,7 @@
 # Requires Python 2.4+ and Openssl 1.0+
 #
 
+import errno as errno
 import glob
 import random
 import string
@@ -63,6 +64,50 @@ class TestFileOperations(AgentTestCase):
         self.assertEquals(content, content_read)
 
         os.remove(test_file)
+
+    def test_findre_in_file(self):
+        fp = tempfile.mktemp()
+        with open(fp, 'w') as f:
+            f.write(
+'''
+First line
+Second line
+Third line with more words
+'''
+            )
+
+        self.assertNotEquals(
+            None,
+            fileutil.findre_in_file(fp, ".*rst line$"))
+        self.assertNotEquals(
+            None,
+            fileutil.findre_in_file(fp, ".*ond line$"))
+        self.assertNotEquals(
+            None,
+            fileutil.findre_in_file(fp, ".*with more.*"))
+        self.assertNotEquals(
+            None,
+            fileutil.findre_in_file(fp, "^Third.*"))
+        self.assertEquals(
+            None,
+            fileutil.findre_in_file(fp, "^Do not match.*"))
+
+    def test_findstr_in_file(self):
+        fp = tempfile.mktemp()
+        with open(fp, 'w') as f:
+            f.write(
+'''
+First line
+Second line
+Third line with more words
+'''
+            )
+
+        self.assertTrue(fileutil.findstr_in_file(fp, "First line"))
+        self.assertTrue(fileutil.findstr_in_file(fp, "Second line"))
+        self.assertTrue(
+            fileutil.findstr_in_file(fp, "Third line with more words"))
+        self.assertFalse(fileutil.findstr_in_file(fp, "Not a line"))
 
     def test_get_last_path_element(self):
         filepath = '/tmp/abc.def'
@@ -196,6 +241,76 @@ DHCP_HOSTNAME=test\n"
             with patch.object(fileutil, 'read_file', return_value=bad_file):
                 fileutil.update_conf_file(path, 'DHCP_HOSTNAME', 'DHCP_HOSTNAME=test')
                 patch_write.assert_called_once_with(path, updated_file)
+
+    def test_clean_ioerror_ignores_missing(self):
+        e = IOError()
+        e.errno = errno.ENOSPC
+
+        # Send no paths
+        fileutil.clean_ioerror(e)
+
+        # Send missing file(s) / directories
+        fileutil.clean_ioerror(e, paths=['/foo/not/here', None, '/bar/not/there'])
+
+    def test_clean_ioerror_ignores_unless_ioerror(self):
+        try:
+            d = tempfile.mkdtemp()
+            fd, f = tempfile.mkstemp()
+            os.close(fd)
+            fileutil.write_file(f, 'Not empty')
+
+            # Send non-IOError exception
+            e = Exception()
+            fileutil.clean_ioerror(e, paths=[d, f])
+            self.assertTrue(os.path.isdir(d))
+            self.assertTrue(os.path.isfile(f))
+
+            # Send unrecognized IOError
+            e = IOError()
+            e.errno = errno.EFAULT
+            self.assertFalse(e.errno in fileutil.KNOWN_IOERRORS)
+            fileutil.clean_ioerror(e, paths=[d, f])
+            self.assertTrue(os.path.isdir(d))
+            self.assertTrue(os.path.isfile(f))
+
+        finally:
+            shutil.rmtree(d)
+            os.remove(f)
+
+    def test_clean_ioerror_removes_files(self):
+        fd, f = tempfile.mkstemp()
+        os.close(fd)
+        fileutil.write_file(f, 'Not empty')
+
+        e = IOError()
+        e.errno = errno.ENOSPC
+        fileutil.clean_ioerror(e, paths=[f])
+        self.assertFalse(os.path.isdir(f))
+        self.assertFalse(os.path.isfile(f))
+
+    def test_clean_ioerror_removes_directories(self):
+        d1 = tempfile.mkdtemp()
+        d2 = tempfile.mkdtemp()
+        for n in ['foo', 'bar']:
+            fileutil.write_file(os.path.join(d2, n), 'Not empty')
+
+        e = IOError()
+        e.errno = errno.ENOSPC
+        fileutil.clean_ioerror(e, paths=[d1, d2])
+        self.assertFalse(os.path.isdir(d1))
+        self.assertFalse(os.path.isfile(d1))
+        self.assertFalse(os.path.isdir(d2))
+        self.assertFalse(os.path.isfile(d2))
+
+    def test_clean_ioerror_handles_a_range_of_errors(self):
+        for err in fileutil.KNOWN_IOERRORS:
+            e = IOError()
+            e.errno = err
+
+            d = tempfile.mkdtemp()
+            fileutil.clean_ioerror(e, paths=[d])
+            self.assertFalse(os.path.isdir(d))
+            self.assertFalse(os.path.isfile(d))
 
 if __name__ == '__main__':
     unittest.main()

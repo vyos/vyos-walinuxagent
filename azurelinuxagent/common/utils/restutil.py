@@ -17,20 +17,74 @@
 # Requires Python 2.4+ and Openssl 1.0+
 #
 
+import os
 import time
+import traceback
 
 import azurelinuxagent.common.conf as conf
 import azurelinuxagent.common.logger as logger
-from azurelinuxagent.common.exception import HttpError
-from azurelinuxagent.common.future import httpclient, urlparse
+import azurelinuxagent.common.utils.textutil as textutil
 
-"""
-REST api util functions
-"""
+from azurelinuxagent.common.exception import HttpError, ResourceGoneError
+from azurelinuxagent.common.future import httpclient, urlparse, ustr
+from azurelinuxagent.common.version import PY_VERSION_MAJOR
 
-RETRY_WAITING_INTERVAL = 3
-secure_warning = True
 
+SECURE_WARNING_EMITTED = False
+
+DEFAULT_RETRIES = 3
+
+SHORT_DELAY_IN_SECONDS = 5
+LONG_DELAY_IN_SECONDS = 15
+
+RETRY_CODES = [
+    httpclient.RESET_CONTENT,
+    httpclient.PARTIAL_CONTENT,
+    httpclient.FORBIDDEN,
+    httpclient.INTERNAL_SERVER_ERROR,
+    httpclient.NOT_IMPLEMENTED,
+    httpclient.BAD_GATEWAY,
+    httpclient.SERVICE_UNAVAILABLE,
+    httpclient.GATEWAY_TIMEOUT,
+    httpclient.INSUFFICIENT_STORAGE,
+    429, # Request Rate Limit Exceeded
+]
+
+RESOURCE_GONE_CODES = [
+    httpclient.BAD_REQUEST,
+    httpclient.GONE
+]
+
+OK_CODES = [
+    httpclient.OK,
+    httpclient.CREATED,
+    httpclient.ACCEPTED
+]
+
+THROTTLE_CODES = [
+    httpclient.FORBIDDEN,
+    httpclient.SERVICE_UNAVAILABLE
+]
+
+RETRY_EXCEPTIONS = [
+    httpclient.NotConnected,
+    httpclient.IncompleteRead,
+    httpclient.ImproperConnectionState,
+    httpclient.BadStatusLine
+]
+
+HTTP_PROXY_ENV = "http_proxy"
+HTTPS_PROXY_ENV = "https_proxy"
+
+
+def _is_retry_status(status, retry_codes=RETRY_CODES):
+    return status in retry_codes
+
+def _is_retry_exception(e):
+    return len([x for x in RETRY_EXCEPTIONS if isinstance(e, x)]) > 0
+
+def _is_throttle_status(status):
+    return status in THROTTLE_CODES
 
 def _parse_url(url):
     o = urlparse(url)
@@ -45,46 +99,57 @@ def _parse_url(url):
     return o.hostname, o.port, secure, rel_uri
 
 
-def get_http_proxy():
-    """
-    Get http_proxy and https_proxy from environment variables.
-    Username and password is not supported now.
-    """
+def _get_http_proxy(secure=False):
+    # Prefer the configuration settings over environment variables
     host = conf.get_httpproxy_host()
-    port = conf.get_httpproxy_port()
+    port = None
+
+    if not host is None:
+        port = conf.get_httpproxy_port()
+
+    else:
+        http_proxy_env = HTTPS_PROXY_ENV if secure else HTTP_PROXY_ENV
+        http_proxy_url = None
+        for v in [http_proxy_env, http_proxy_env.upper()]:
+            if v in os.environ:
+                http_proxy_url = os.environ[v]
+                break
+
+        if not http_proxy_url is None:
+            host, port, _, _ = _parse_url(http_proxy_url)
+
     return host, port
 
 
 def _http_request(method, host, rel_uri, port=None, data=None, secure=False,
                   headers=None, proxy_host=None, proxy_port=None):
-    url, conn = None, None
-    if secure:
-        port = 443 if port is None else port
-        if proxy_host is not None and proxy_port is not None:
-            conn = httpclient.HTTPSConnection(proxy_host,
-                                              proxy_port,
-                                              timeout=10)
-            conn.set_tunnel(host, port)
-            # If proxy is used, full url is needed.
-            url = "https://{0}:{1}{2}".format(host, port, rel_uri)
-        else:
-            conn = httpclient.HTTPSConnection(host,
-                                              port,
-                                              timeout=10)
-            url = rel_uri
+
+    headers = {} if headers is None else headers
+    use_proxy = proxy_host is not None and proxy_port is not None
+
+    if port is None:
+        port = 443 if secure else 80
+
+    if use_proxy:
+        conn_host, conn_port = proxy_host, proxy_port
+        scheme = "https" if secure else "http"
+        url = "{0}://{1}:{2}{3}".format(scheme, host, port, rel_uri)
+
     else:
-        port = 80 if port is None else port
-        if proxy_host is not None and proxy_port is not None:
-            conn = httpclient.HTTPConnection(proxy_host,
-                                             proxy_port,
-                                             timeout=10)
-            # If proxy is used, full url is needed.
-            url = "http://{0}:{1}{2}".format(host, port, rel_uri)
-        else:
-            conn = httpclient.HTTPConnection(host,
-                                             port,
-                                             timeout=10)
-            url = rel_uri
+        conn_host, conn_port = host, port
+        url = rel_uri
+
+    if secure:
+        conn = httpclient.HTTPSConnection(conn_host,
+                                        conn_port,
+                                        timeout=10)
+        if use_proxy:
+            conn.set_tunnel(host, port)
+
+    else:
+        conn = httpclient.HTTPConnection(conn_host,
+                                        conn_port,
+                                        timeout=10)
 
     logger.verbose("HTTP connection [{0}] [{1}] [{2}] [{3}]",
                    method,
@@ -92,49 +157,70 @@ def _http_request(method, host, rel_uri, port=None, data=None, secure=False,
                    data,
                    headers)
 
-    headers = {} if headers is None else headers
     conn.request(method=method, url=url, body=data, headers=headers)
-    resp = conn.getresponse()
-    return resp
+    return conn.getresponse()
 
 
-def http_request(method, url, data, headers=None, max_retry=3,
-                 chk_proxy=False):
-    """
-    Sending http request to server
-    On error, sleep 10 and retry max_retry times.
-    """
+def http_request(method,
+                url, data, headers=None,
+                use_proxy=False,
+                max_retry=DEFAULT_RETRIES,
+                retry_codes=RETRY_CODES,
+                retry_delay=SHORT_DELAY_IN_SECONDS):
+
+    global SECURE_WARNING_EMITTED
+
     host, port, secure, rel_uri = _parse_url(url)
-    global secure_warning
 
-    # Check proxy
+    # Use the HTTP(S) proxy
     proxy_host, proxy_port = (None, None)
-    if chk_proxy:
-        proxy_host, proxy_port = get_http_proxy()
+    if use_proxy:
+        proxy_host, proxy_port = _get_http_proxy(secure=secure)
 
-    # If httplib module is not built with ssl support. Fallback to http
+        if proxy_host or proxy_port:
+            logger.verbose("HTTP proxy: [{0}:{1}]", proxy_host, proxy_port)
+
+    # If httplib module is not built with ssl support,
+    # fallback to HTTP if allowed
     if secure and not hasattr(httpclient, "HTTPSConnection"):
+        if not conf.get_allow_http():
+            raise HttpError("HTTPS is unavailable and required")
+
         secure = False
-        if secure_warning:
-            logger.warn("httplib is not built with ssl support")
-            secure_warning = False
+        if not SECURE_WARNING_EMITTED:
+            logger.warn("Python does not include SSL support")
+            SECURE_WARNING_EMITTED = True
 
-    # If httplib module doesn't support https tunnelling. Fallback to http
-    if secure and proxy_host is not None and proxy_port is not None \
-            and not hasattr(httpclient.HTTPSConnection, "set_tunnel"):
+    # If httplib module doesn't support HTTPS tunnelling,
+    # fallback to HTTP if allowed
+    if secure and \
+        proxy_host is not None and \
+        proxy_port is not None \
+        and not hasattr(httpclient.HTTPSConnection, "set_tunnel"):
+
+        if not conf.get_allow_http():
+            raise HttpError("HTTPS tunnelling is unavailable and required")
+
         secure = False
-        if secure_warning:
-            logger.warn("httplib does not support https tunnelling "
-                        "(new in python 2.7)")
-            secure_warning = False
+        if not SECURE_WARNING_EMITTED:
+            logger.warn("Python does not support HTTPS tunnelling")
+            SECURE_WARNING_EMITTED = True
 
-    if proxy_host or proxy_port:
-        logger.verbose("HTTP proxy: [{0}:{1}]", proxy_host, proxy_port)
+    msg = ''
+    attempt = 0
+    delay = retry_delay
 
-    retry_msg = ''
-    log_msg = "HTTP {0}".format(method)
-    for retry in range(0, max_retry):
-        retry_interval = RETRY_WAITING_INTERVAL
+    while attempt < max_retry:
+        if attempt > 0:
+            logger.info("[HTTP Retry] Attempt {0} of {1}: {2}",
+                        attempt+1,
+                        max_retry,
+                        msg)
+            time.sleep(delay)
+
+        attempt += 1
+        delay = retry_delay
+
         try:
             resp = _http_request(method,
                                  host,
@@ -145,55 +231,123 @@ def http_request(method, url, data, headers=None, max_retry=3,
                                  headers=headers,
                                  proxy_host=proxy_host,
                                  proxy_port=proxy_port)
-            logger.verbose("HTTP response status: [{0}]", resp.status)
+            logger.verbose("[HTTP Response] Status Code {0}", resp.status)
+
+            if request_failed(resp):
+                if _is_retry_status(resp.status, retry_codes=retry_codes):
+                    msg = '[HTTP Retry] HTTP {0} Status Code {1}'.format(
+                        method, resp.status)
+                    if _is_throttle_status(resp.status):
+                        delay = LONG_DELAY_IN_SECONDS
+                        logger.info("[HTTP Delay] Delay {0} seconds for " \
+                                    "Status Code {1}".format(
+                                        delay, resp.status))
+                    continue
+
+            if resp.status in RESOURCE_GONE_CODES:
+                raise ResourceGoneError()
+
             return resp
+
         except httpclient.HTTPException as e:
-            retry_msg = 'HTTP exception: {0} {1}'.format(log_msg, e)
-            retry_interval = 5
+            msg = '[HTTP Failed] HTTP {0} HttpException {1}'.format(method, e)
+            if _is_retry_exception(e):
+                continue
+            break
+
         except IOError as e:
-            retry_msg = 'IO error: {0} {1}'.format(log_msg, e)
-            # error 101: network unreachable; when the adapter resets we may
-            # see this transient error for a short time, retry once.
-            if e.errno == 101:
-                retry_interval = RETRY_WAITING_INTERVAL
-                max_retry = 1
+            msg = '[HTTP Failed] HTTP {0} IOError {1}'.format(method, e)
+            continue
+
+    raise HttpError(msg)
+
+
+def http_get(url, headers=None, use_proxy=False,
+                max_retry=DEFAULT_RETRIES,
+                retry_codes=RETRY_CODES,
+                retry_delay=SHORT_DELAY_IN_SECONDS):
+    return http_request("GET",
+                        url, None, headers=headers,
+                        use_proxy=use_proxy,
+                        max_retry=max_retry,
+                        retry_codes=retry_codes,
+                        retry_delay=retry_delay)
+
+
+def http_head(url, headers=None, use_proxy=False,
+                max_retry=DEFAULT_RETRIES,
+                retry_codes=RETRY_CODES,
+                retry_delay=SHORT_DELAY_IN_SECONDS):
+    return http_request("HEAD",
+                        url, None, headers=headers,
+                        use_proxy=use_proxy,
+                        max_retry=max_retry,
+                        retry_codes=retry_codes,
+                        retry_delay=retry_delay)
+
+
+def http_post(url, data, headers=None, use_proxy=False,
+                max_retry=DEFAULT_RETRIES,
+                retry_codes=RETRY_CODES,
+                retry_delay=SHORT_DELAY_IN_SECONDS):
+    return http_request("POST",
+                        url, data, headers=headers,
+                        use_proxy=use_proxy,
+                        max_retry=max_retry,
+                        retry_codes=retry_codes,
+                        retry_delay=retry_delay)
+
+
+def http_put(url, data, headers=None, use_proxy=False,
+                max_retry=DEFAULT_RETRIES,
+                retry_codes=RETRY_CODES,
+                retry_delay=SHORT_DELAY_IN_SECONDS):
+    return http_request("PUT",
+                        url, data, headers=headers,
+                        use_proxy=use_proxy,
+                        max_retry=max_retry,
+                        retry_codes=retry_codes,
+                        retry_delay=retry_delay)
+
+
+def http_delete(url, headers=None, use_proxy=False,
+                max_retry=DEFAULT_RETRIES,
+                retry_codes=RETRY_CODES,
+                retry_delay=SHORT_DELAY_IN_SECONDS):
+    return http_request("DELETE",
+                        url, None, headers=headers,
+                        use_proxy=use_proxy,
+                        max_retry=max_retry,
+                        retry_codes=retry_codes,
+                        retry_delay=retry_delay)
+
+def request_failed(resp, ok_codes=OK_CODES):
+    return not request_succeeded(resp, ok_codes=ok_codes)
+
+def request_succeeded(resp, ok_codes=OK_CODES):
+    return resp is not None and resp.status in ok_codes
+
+def read_response_error(resp):
+    result = ''
+    if resp is not None:
+        try:
+            result = "[HTTP Failed] [{0}: {1}] {2}".format(
+                        resp.status,
+                        resp.reason,
+                        resp.read())
+
+            # this result string is passed upstream to several methods
+            # which do a raise HttpError() or a format() of some kind;
+            # as a result it cannot have any unicode characters
+            if PY_VERSION_MAJOR < 3:
+                result = ustr(result, encoding='ascii', errors='ignore')
             else:
-                retry_interval = 0
-                max_retry = 0
+                result = result\
+                    .encode(encoding='ascii', errors='ignore')\
+                    .decode(encoding='ascii', errors='ignore')
 
-        if retry < max_retry:
-            logger.info("Retry [{0}/{1} - {3}]",
-                        retry+1,
-                        max_retry,
-                        retry_interval,
-                        retry_msg)
-            time.sleep(retry_interval)
+            result = textutil.replace_non_ascii(result)
 
-    raise HttpError("{0} failed".format(log_msg))
-
-
-def http_get(url, headers=None, max_retry=3, chk_proxy=False):
-    return http_request("GET", url, data=None, headers=headers,
-                        max_retry=max_retry, chk_proxy=chk_proxy)
-
-
-def http_head(url, headers=None, max_retry=3, chk_proxy=False):
-    return http_request("HEAD", url, None, headers=headers,
-                        max_retry=max_retry, chk_proxy=chk_proxy)
-
-
-def http_post(url, data, headers=None, max_retry=3, chk_proxy=False):
-    return http_request("POST", url, data, headers=headers,
-                        max_retry=max_retry, chk_proxy=chk_proxy)
-
-
-def http_put(url, data, headers=None, max_retry=3, chk_proxy=False):
-    return http_request("PUT", url, data, headers=headers,
-                        max_retry=max_retry, chk_proxy=chk_proxy)
-
-
-def http_delete(url, headers=None, max_retry=3, chk_proxy=False):
-    return http_request("DELETE", url, None, headers=headers,
-                        max_retry=max_retry, chk_proxy=chk_proxy)
-
-# End REST api util functions
+        except Exception:
+            logger.warn(traceback.format_exc())
+    return result

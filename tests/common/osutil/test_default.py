@@ -25,6 +25,7 @@ from azurelinuxagent.common.exception import OSUtilError
 from azurelinuxagent.common.future import ustr
 from azurelinuxagent.common.osutil import get_osutil
 from azurelinuxagent.common.utils import fileutil
+from azurelinuxagent.common.utils.flexible_version import FlexibleVersion
 from tests.tools import *
 
 
@@ -111,6 +112,21 @@ class TestOSUtil(AgentTestCase):
         with patch(open_patch(), mo):
             self.assertFalse(osutil.DefaultOSUtil().is_primary_interface('lo'))
             self.assertTrue(osutil.DefaultOSUtil().is_primary_interface('eth0'))
+
+    def test_sriov(self):
+        routing_table = "\
+        Iface	Destination	Gateway 	Flags	RefCnt	Use	Metric	Mask		MTU	Window	IRTT \n" \
+        "bond0	00000000	0100000A	0003	0	    0	0	00000000	0	0	0   \n" \
+        "bond0	0000000A	00000000	0001	0	    0	0	00000000	0	0	0   \n" \
+        "eth0	0000000A	00000000	0001	0	    0	0	00000000	0	0	0   \n" \
+        "bond0	10813FA8	0100000A	0007	0	    0	0	00000000	0	0	0   \n" \
+        "bond0	FEA9FEA9	0100000A	0007	0	    0	0	00000000	0	0	0   \n"
+
+        mo = mock.mock_open(read_data=routing_table)
+        with patch(open_patch(), mo):
+            self.assertFalse(osutil.DefaultOSUtil().is_primary_interface('eth0'))
+            self.assertTrue(osutil.DefaultOSUtil().is_primary_interface('bond0'))
+
 
     def test_multiple_default_routes(self):
         routing_table = "\
@@ -362,23 +378,50 @@ Match host 192.168.1.2\n\
                     conf.get_sshd_conf_file_path(),
                     expected_output)
 
+    def test_correct_instance_id(self):
+        util = osutil.DefaultOSUtil()
+        self.assertEqual(
+            "12345678-1234-1234-1234-123456789012",
+            util._correct_instance_id("78563412-3412-3412-1234-123456789012"))
+        self.assertEqual(
+            "D0DF4C54-4ECB-4A4B-9954-5BDF3ED5C3B8",
+            util._correct_instance_id("544CDFD0-CB4E-4B4A-9954-5BDF3ED5C3B8"))
+
     @patch('os.path.isfile', return_value=True)
     @patch('azurelinuxagent.common.utils.fileutil.read_file',
-            return_value="B9F3C233-9913-9F42-8EB3-BA656DF32502")
+            return_value="33C2F3B9-1399-429F-8EB3-BA656DF32502")
     def test_get_instance_id_from_file(self, mock_read, mock_isfile):
         util = osutil.DefaultOSUtil()
         self.assertEqual(
-            "B9F3C233-9913-9F42-8EB3-BA656DF32502",
+            util.get_instance_id(),
+            "B9F3C233-9913-9F42-8EB3-BA656DF32502")
+
+    @patch('os.path.isfile', return_value=True)
+    @patch('azurelinuxagent.common.utils.fileutil.read_file',
+            return_value="")
+    def test_get_instance_id_empty_from_file(self, mock_read, mock_isfile):
+        util = osutil.DefaultOSUtil()
+        self.assertEqual(
+            "",
+            util.get_instance_id())
+
+    @patch('os.path.isfile', return_value=True)
+    @patch('azurelinuxagent.common.utils.fileutil.read_file',
+            return_value="Value")
+    def test_get_instance_id_malformed_from_file(self, mock_read, mock_isfile):
+        util = osutil.DefaultOSUtil()
+        self.assertEqual(
+            "Value",
             util.get_instance_id())
 
     @patch('os.path.isfile', return_value=False)
     @patch('azurelinuxagent.common.utils.shellutil.run_get_output',
-            return_value=[0, 'B9F3C233-9913-9F42-8EB3-BA656DF32502'])
+            return_value=[0, '33C2F3B9-1399-429F-8EB3-BA656DF32502'])
     def test_get_instance_id_from_dmidecode(self, mock_shell, mock_isfile):
         util = osutil.DefaultOSUtil()
         self.assertEqual(
-            "B9F3C233-9913-9F42-8EB3-BA656DF32502",
-            util.get_instance_id())
+            util.get_instance_id(),
+            "B9F3C233-9913-9F42-8EB3-BA656DF32502")
 
     @patch('os.path.isfile', return_value=False)
     @patch('azurelinuxagent.common.utils.shellutil.run_get_output',
@@ -393,6 +436,182 @@ Match host 192.168.1.2\n\
     def test_get_instance_id_unexpected(self, mock_shell, mock_isfile):
         util = osutil.DefaultOSUtil()
         self.assertEqual("", util.get_instance_id())
+
+    @patch('os.path.isfile', return_value=True)
+    @patch('azurelinuxagent.common.utils.fileutil.read_file')
+    def test_is_current_instance_id_from_file(self, mock_read, mock_isfile):
+        util = osutil.DefaultOSUtil()
+
+        mock_read.return_value = "B9F3C233-9913-9F42-8EB3-BA656DF32502"
+        self.assertTrue(util.is_current_instance_id(
+            "B9F3C233-9913-9F42-8EB3-BA656DF32502"))
+
+        mock_read.return_value = "33C2F3B9-1399-429F-8EB3-BA656DF32502"
+        self.assertTrue(util.is_current_instance_id(
+            "B9F3C233-9913-9F42-8EB3-BA656DF32502"))
+
+    @patch('os.path.isfile', return_value=False)
+    @patch('azurelinuxagent.common.utils.shellutil.run_get_output')
+    def test_is_current_instance_id_from_dmidecode(self, mock_shell, mock_isfile):
+        util = osutil.DefaultOSUtil()
+
+        mock_shell.return_value = [0, 'B9F3C233-9913-9F42-8EB3-BA656DF32502']
+        self.assertTrue(util.is_current_instance_id(
+            "B9F3C233-9913-9F42-8EB3-BA656DF32502"))
+
+        mock_shell.return_value = [0, '33C2F3B9-1399-429F-8EB3-BA656DF32502']
+        self.assertTrue(util.is_current_instance_id(
+            "B9F3C233-9913-9F42-8EB3-BA656DF32502"))
+
+    @patch('azurelinuxagent.common.conf.get_sudoers_dir')
+    def test_conf_sudoer(self, mock_dir):
+        tmp_dir = tempfile.mkdtemp()
+        mock_dir.return_value = tmp_dir
+
+        util = osutil.DefaultOSUtil()
+
+        # Assert the sudoer line is added if missing
+        util.conf_sudoer("FooBar")
+        waagent_sudoers = os.path.join(tmp_dir, 'waagent')
+        self.assertTrue(os.path.isfile(waagent_sudoers))
+
+        count = -1
+        with open(waagent_sudoers, 'r') as f:
+            count = len(f.readlines())
+        self.assertEqual(1, count)
+
+        # Assert the line does not get added a second time
+        util.conf_sudoer("FooBar")
+
+        count = -1
+        with open(waagent_sudoers, 'r') as f:
+            count = len(f.readlines())
+        print("WRITING TO {0}".format(waagent_sudoers))
+        self.assertEqual(1, count)
+
+    @patch('os.getuid', return_value=42)
+    @patch('azurelinuxagent.common.utils.shellutil.run_get_output')
+    @patch('azurelinuxagent.common.utils.shellutil.run')
+    def test_enable_firewall(self, mock_run, mock_output, mock_uid):
+        osutil._enable_firewall = True
+        util = osutil.DefaultOSUtil()
+
+        dst = '1.2.3.4'
+        uid = 42
+        version = "iptables v{0}".format(osutil.IPTABLES_LOCKING_VERSION)
+        wait = "-w"
+
+        mock_run.side_effect = [1, 0, 0]
+        mock_output.side_effect = [(0, version), (0, "Output")]
+        self.assertTrue(util.enable_firewall(dst_ip=dst, uid=uid))
+
+        mock_run.assert_has_calls([
+            call(osutil.FIREWALL_DROP.format(wait, "C", dst), chk_err=False),
+            call(osutil.FIREWALL_ACCEPT.format(wait, "A", dst, uid)),
+            call(osutil.FIREWALL_DROP.format(wait, "A", dst))
+        ])
+        mock_output.assert_has_calls([
+            call(osutil.IPTABLES_VERSION),
+            call(osutil.FIREWALL_LIST.format(wait))
+        ])
+        self.assertTrue(osutil._enable_firewall)
+
+    @patch('os.getuid', return_value=42)
+    @patch('azurelinuxagent.common.utils.shellutil.run_get_output')
+    @patch('azurelinuxagent.common.utils.shellutil.run')
+    def test_enable_firewall_no_wait(self, mock_run, mock_output, mock_uid):
+        osutil._enable_firewall = True
+        util = osutil.DefaultOSUtil()
+
+        dst = '1.2.3.4'
+        uid = 42
+        version = "iptables v{0}".format(osutil.IPTABLES_LOCKING_VERSION-1)
+        wait = ""
+
+        mock_run.side_effect = [1, 0, 0]
+        mock_output.side_effect = [(0, version), (0, "Output")]
+        self.assertTrue(util.enable_firewall(dst_ip=dst, uid=uid))
+
+        mock_run.assert_has_calls([
+            call(osutil.FIREWALL_DROP.format(wait, "C", dst), chk_err=False),
+            call(osutil.FIREWALL_ACCEPT.format(wait, "A", dst, uid)),
+            call(osutil.FIREWALL_DROP.format(wait, "A", dst))
+        ])
+        mock_output.assert_has_calls([
+            call(osutil.IPTABLES_VERSION),
+            call(osutil.FIREWALL_LIST.format(wait))
+        ])
+        self.assertTrue(osutil._enable_firewall)
+
+    @patch('os.getuid', return_value=42)
+    @patch('azurelinuxagent.common.utils.shellutil.run_get_output')
+    @patch('azurelinuxagent.common.utils.shellutil.run')
+    def test_enable_firewall_skips_if_drop_exists(self, mock_run, mock_output, mock_uid):
+        osutil._enable_firewall = True
+        util = osutil.DefaultOSUtil()
+
+        dst = '1.2.3.4'
+        uid = 42
+        version = "iptables v{0}".format(osutil.IPTABLES_LOCKING_VERSION)
+        wait = "-w"
+
+        mock_run.side_effect = [0, 0, 0]
+        mock_output.return_value = (0, version)
+        self.assertTrue(util.enable_firewall(dst_ip=dst, uid=uid))
+
+        mock_run.assert_has_calls([
+            call(osutil.FIREWALL_DROP.format(wait, "C", dst), chk_err=False),
+        ])
+        mock_output.assert_has_calls([
+            call(osutil.IPTABLES_VERSION)
+        ])
+        self.assertTrue(osutil._enable_firewall)
+
+    @patch('os.getuid', return_value=42)
+    @patch('azurelinuxagent.common.utils.shellutil.run_get_output')
+    @patch('azurelinuxagent.common.utils.shellutil.run')
+    def test_enable_firewall_ignores_exceptions(self, mock_run, mock_output, mock_uid):
+        osutil._enable_firewall = True
+        util = osutil.DefaultOSUtil()
+
+        dst = '1.2.3.4'
+        uid = 42
+        version = "iptables v{0}".format(osutil.IPTABLES_LOCKING_VERSION)
+        wait = "-w"
+
+        mock_run.side_effect = [1, Exception]
+        mock_output.return_value = (0, version)
+        self.assertFalse(util.enable_firewall(dst_ip=dst, uid=uid))
+
+        mock_run.assert_has_calls([
+            call(osutil.FIREWALL_DROP.format(wait, "C", dst), chk_err=False),
+            call(osutil.FIREWALL_ACCEPT.format(wait, "A", dst, uid))
+        ])
+        mock_output.assert_has_calls([
+            call(osutil.IPTABLES_VERSION)
+        ])
+        self.assertFalse(osutil._enable_firewall)
+
+    @patch('os.getuid', return_value=42)
+    @patch('azurelinuxagent.common.utils.shellutil.run_get_output')
+    @patch('azurelinuxagent.common.utils.shellutil.run')
+    def test_enable_firewall_skips_if_disabled(self, mock_run, mock_output, mock_uid):
+        osutil._enable_firewall = False
+        util = osutil.DefaultOSUtil()
+
+        dst = '1.2.3.4'
+        uid = 42
+        version = "iptables v{0}".format(osutil.IPTABLES_LOCKING_VERSION)
+        wait = "-w"
+
+        mock_run.side_effect = [1, 0, 0]
+        mock_output.side_effect = [(0, version), (0, "Output")]
+        self.assertFalse(util.enable_firewall(dst_ip=dst, uid=uid))
+
+        mock_run.assert_not_called()
+        mock_output.assert_not_called()
+        mock_uid.assert_not_called()
+        self.assertFalse(osutil._enable_firewall)
 
 if __name__ == '__main__':
     unittest.main()

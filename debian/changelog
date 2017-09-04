@@ -1,3 +1,9 @@
+walinuxagent (2.2.16-0ubuntu1) artful; urgency=medium
+
+  * New upstream release (LP: #1714299).
+
+ -- Łukasz 'sil2100' Zemczak <lukasz.zemczak@ubuntu.com>  Mon, 04 Sep 2017 10:27:07 +0200
+
 walinuxagent (2.2.14-0ubuntu1) artful; urgency=medium
 
   * New upstream release (LP: #1701350).

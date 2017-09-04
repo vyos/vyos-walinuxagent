@@ -53,16 +53,16 @@ class ProvisionHandler(object):
         self.protocol_util = get_protocol_util()
 
     def run(self):
-        # If provision is not enabled, report ready and then return
         if not conf.get_provision_enabled():
             logger.info("Provisioning is disabled, skipping.")
+            self.write_provisioned()
+            self.report_ready()
             return
 
         try:
             utc_start = datetime.utcnow()
             thumbprint = None
 
-            # if provisioning is already done, return
             if self.is_provisioned():
                 logger.info("Provisioning already completed, skipping.")
                 return
@@ -85,7 +85,6 @@ class ProvisionHandler(object):
             thumbprint = self.reg_ssh_host_key()
             self.osutil.restart_ssh_service()
 
-            # write out provisioned file and report Ready
             self.write_provisioned()
 
             self.report_event("Provision succeed",
@@ -128,9 +127,17 @@ class ProvisionHandler(object):
         keypair_type = conf.get_ssh_host_keypair_type()
         if conf.get_regenerate_ssh_host_key():
             fileutil.rm_files(conf.get_ssh_key_glob())
-            keygen_cmd = "ssh-keygen -N '' -t {0} -f {1}"
-            shellutil.run(keygen_cmd.format(keypair_type,
-                        conf.get_ssh_key_private_path()))
+            if conf.get_ssh_host_keypair_mode() == "auto":
+                '''
+                The -A option generates all supported key types.
+                This is supported since OpenSSH 5.9 (2011).
+                '''
+                shellutil.run("ssh-keygen -A")
+            else:
+                keygen_cmd = "ssh-keygen -N '' -t {0} -f {1}"
+                shellutil.run(keygen_cmd.
+                              format(keypair_type,
+                                     conf.get_ssh_key_private_path()))
         return self.get_ssh_host_key_thumbprint()
 
     def get_ssh_host_key_thumbprint(self, chk_err=True):
@@ -162,7 +169,7 @@ class ProvisionHandler(object):
             return False
 
         s = fileutil.read_file(self.provisioned_file_path()).strip()
-        if s != self.osutil.get_instance_id():
+        if not self.osutil.is_current_instance_id(s):
             if len(s) > 0:
                 logger.warn("VM is provisioned, "
                             "but the VM unique identifier has changed -- "
@@ -173,6 +180,7 @@ class ProvisionHandler(object):
                 deprovision_handler.run_changed_unique_id()
 
             self.write_provisioned()
+            self.report_ready()
 
         return True
 

@@ -22,6 +22,7 @@ from datetime import datetime
 import json
 import shutil
 
+from azurelinuxagent.common.event import *
 from azurelinuxagent.common.protocol.hostplugin import *
 from azurelinuxagent.common.protocol.metadata import *
 from azurelinuxagent.common.protocol.wire import *
@@ -148,7 +149,9 @@ class UpdateTestCase(AgentTestCase):
 
     def create_error(self, error_data=NO_ERROR):
         with self.get_error_file(error_data) as path:
-            return GuestAgentError(path.name)
+            err = GuestAgentError(path.name)
+            err.load()
+            return err
 
     def copy_agents(self, *agents):
         if len(agents) <= 0:
@@ -157,11 +160,11 @@ class UpdateTestCase(AgentTestCase):
             fileutil.copy_file(agent, to_dir=self.tmp_dir)
         return
 
-    def expand_agents(self, mark_test=False):
+    def expand_agents(self, mark_optional=False):
         for agent in self.agent_pkgs():
             path = os.path.join(self.tmp_dir, fileutil.trim_ext(agent, "zip"))
             zipfile.ZipFile(agent).extractall(path)
-            if mark_test:
+            if mark_optional:
                 src = os.path.join(data_dir, 'ga', 'supported.json')
                 dst = os.path.join(path, 'supported.json')
                 shutil.copy(src, dst)
@@ -170,12 +173,12 @@ class UpdateTestCase(AgentTestCase):
                 fileutil.write_file(dst, json.dumps(SENTINEL_ERROR))
         return
 
-    def prepare_agent(self, version, mark_test=False):
+    def prepare_agent(self, version, mark_optional=False):
         """
         Create a download for the current agent version, copied from test data
         """
         self.copy_agents(get_agent_pkgs()[0])
-        self.expand_agents(mark_test=mark_test)
+        self.expand_agents(mark_optional=mark_optional)
 
         versions = self.agent_versions()
         src_v = FlexibleVersion(str(versions[0]))
@@ -246,7 +249,6 @@ class TestSupportedDistribution(UpdateTestCase):
         self.sd = SupportedDistribution({
                     'slice':10,
                     'versions': ['^Ubuntu,16.10,yakkety$']})
-        
 
     def test_creation(self):
         self.assertRaises(TypeError, SupportedDistribution)
@@ -276,6 +278,7 @@ class TestSupported(UpdateTestCase):
     def setUp(self):
         UpdateTestCase.setUp(self)
         self.sp = Supported(os.path.join(data_dir, 'ga', 'supported.json'))
+        self.sp.load()
 
     def test_creation(self):
         self.assertRaises(TypeError, Supported)
@@ -305,6 +308,7 @@ class TestGuestAgentError(UpdateTestCase):
 
         with self.get_error_file(error_data=WITH_ERROR) as path:
             err = GuestAgentError(path.name)
+            err.load()
             self.assertEqual(path.name, err.path)
         self.assertNotEqual(None, err)
 
@@ -316,6 +320,7 @@ class TestGuestAgentError(UpdateTestCase):
     def test_clear(self):
         with self.get_error_file(error_data=WITH_ERROR) as path:
             err = GuestAgentError(path.name)
+            err.load()
             self.assertEqual(path.name, err.path)
         self.assertNotEqual(None, err)
 
@@ -328,26 +333,15 @@ class TestGuestAgentError(UpdateTestCase):
     def test_is_sentinel(self):
         with self.get_error_file(error_data=SENTINEL_ERROR) as path:
             err = GuestAgentError(path.name)
+            err.load()
             self.assertTrue(err.is_blacklisted)
             self.assertTrue(err.is_sentinel)
         
         with self.get_error_file(error_data=FATAL_ERROR) as path:
             err = GuestAgentError(path.name)
+            err.load()
             self.assertTrue(err.is_blacklisted)
             self.assertFalse(err.is_sentinel)
-
-    def test_load_preserves_error_state(self):
-        with self.get_error_file(error_data=WITH_ERROR) as path:
-            err = GuestAgentError(path.name)
-            self.assertEqual(path.name, err.path)
-        self.assertNotEqual(None, err)
-
-        with self.get_error_file(error_data=NO_ERROR):
-            err.load()
-        self.assertEqual(WITH_ERROR["last_failure"], err.last_failure)
-        self.assertEqual(WITH_ERROR["failure_count"], err.failure_count)
-        self.assertEqual(WITH_ERROR["was_fatal"], err.was_fatal)
-        return
 
     def test_save(self):
         err1 = self.create_error()
@@ -406,22 +400,20 @@ class TestGuestAgent(UpdateTestCase):
         self.agent_path = os.path.join(self.tmp_dir, get_agent_name())
         return
 
-    def tearDown(self):
-        self.remove_agents()
-        return
-
     def test_creation(self):
         self.assertRaises(UpdateError, GuestAgent, "A very bad file name")
         n = "{0}-a.bad.version".format(AGENT_NAME)
         self.assertRaises(UpdateError, GuestAgent, n)
+
+        self.expand_agents()
 
         agent = GuestAgent(path=self.agent_path)
         self.assertNotEqual(None, agent)
         self.assertEqual(get_agent_name(), agent.name)
         self.assertEqual(get_agent_version(), agent.version)
 
-        self.assertFalse(agent.is_test)
-        self.assertFalse(agent.in_slice)
+        self.assertFalse(agent._is_optional)
+        self.assertFalse(agent._in_slice)
 
         self.assertEqual(self.agent_path, agent.get_agent_dir())
 
@@ -436,13 +428,14 @@ class TestGuestAgent(UpdateTestCase):
         self.assertEqual(path, agent.get_agent_pkg_path())
 
         self.assertTrue(agent.is_downloaded)
-        # Note: Agent will get blacklisted since the package for this test is invalid
-        self.assertTrue(agent.is_blacklisted)
-        self.assertFalse(agent.is_available)
+        self.assertFalse(agent.is_blacklisted)
+        self.assertTrue(agent.is_available)
         return
 
     @patch("azurelinuxagent.ga.update.GuestAgent._ensure_downloaded")
-    def test_clear_error(self, mock_ensure):
+    def test_clear_error(self, mock_downloaded):
+        self.expand_agents()
+
         agent = GuestAgent(path=self.agent_path)
         agent.mark_failure(is_fatal=True)
 
@@ -459,7 +452,8 @@ class TestGuestAgent(UpdateTestCase):
         return
 
     @patch("azurelinuxagent.ga.update.GuestAgent._ensure_downloaded")
-    def test_is_available(self, mock_ensure):
+    @patch("azurelinuxagent.ga.update.GuestAgent._ensure_loaded")
+    def test_is_available(self, mock_loaded, mock_downloaded):
         agent = GuestAgent(path=self.agent_path)
 
         self.assertFalse(agent.is_available)
@@ -471,7 +465,8 @@ class TestGuestAgent(UpdateTestCase):
         return
 
     @patch("azurelinuxagent.ga.update.GuestAgent._ensure_downloaded")
-    def test_is_blacklisted(self, mock_ensure):
+    @patch("azurelinuxagent.ga.update.GuestAgent._ensure_loaded")
+    def test_is_blacklisted(self, mock_loaded, mock_downloaded):
         agent = GuestAgent(path=self.agent_path)
         self.assertFalse(agent.is_blacklisted)
 
@@ -485,7 +480,8 @@ class TestGuestAgent(UpdateTestCase):
         return
 
     @patch("azurelinuxagent.ga.update.GuestAgent._ensure_downloaded")
-    def test_is_downloaded(self, mock_ensure):
+    @patch("azurelinuxagent.ga.update.GuestAgent._ensure_loaded")
+    def test_is_downloaded(self, mock_loaded, mock_downloaded):
         agent = GuestAgent(path=self.agent_path)
         self.assertFalse(agent.is_downloaded)
         agent._unpack()
@@ -493,50 +489,47 @@ class TestGuestAgent(UpdateTestCase):
         return
 
     @patch('platform.linux_distribution', return_value=['Ubuntu', '16.10', 'yakkety'])
-    def test_is_test(self, mock_dist):
-        self.expand_agents(mark_test=True)
+    @patch('azurelinuxagent.ga.update.GuestAgent._enable')
+    def test_is_optional(self, mock_enable, mock_dist):
+        self.expand_agents(mark_optional=True)
         agent = GuestAgent(path=self.agent_path)
 
         self.assertTrue(agent.is_blacklisted)
-        self.assertTrue(agent.is_test)
+        self.assertTrue(agent._is_optional)
 
     @patch('platform.linux_distribution', return_value=['Ubuntu', '16.10', 'yakkety'])
     @patch('azurelinuxagent.ga.update.datetime')
     def test_in_slice(self, mock_dt, mock_dist):
-        self.expand_agents(mark_test=True)
+        self.expand_agents(mark_optional=True)
         agent = GuestAgent(path=self.agent_path)
 
         mock_dt.utcnow = Mock(return_value=datetime(2017, 1, 1, 0, 0, 5))
-        self.assertTrue(agent.in_slice)
+        self.assertTrue(agent._in_slice)
 
         mock_dt.utcnow = Mock(return_value=datetime(2017, 1, 1, 0, 0, 42))
-        self.assertFalse(agent.in_slice)
+        self.assertFalse(agent._in_slice)
 
     @patch('platform.linux_distribution', return_value=['Ubuntu', '16.10', 'yakkety'])
     @patch('azurelinuxagent.ga.update.datetime')
     def test_enable(self, mock_dt, mock_dist):
         mock_dt.utcnow = Mock(return_value=datetime(2017, 1, 1, 0, 0, 5))
 
-        self.expand_agents(mark_test=True)
+        self.expand_agents(mark_optional=True)
         agent = GuestAgent(path=self.agent_path)
 
-        self.assertTrue(agent.is_blacklisted)
-        self.assertTrue(agent.is_test)
-        self.assertTrue(agent.in_slice)
-
-        agent.enable()
-
         self.assertFalse(agent.is_blacklisted)
-        self.assertFalse(agent.is_test)
+        self.assertFalse(agent._is_optional)
 
         # Ensure the new state is preserved to disk
         agent = GuestAgent(path=self.agent_path)
         self.assertFalse(agent.is_blacklisted)
-        self.assertFalse(agent.is_test)
+        self.assertFalse(agent._is_optional)
 
     @patch("azurelinuxagent.ga.update.GuestAgent._ensure_downloaded")
-    def test_mark_failure(self, mock_ensure):
+    @patch("azurelinuxagent.ga.update.GuestAgent._ensure_loaded")
+    def test_mark_failure(self, mock_loaded, mock_downloaded):
         agent = GuestAgent(path=self.agent_path)
+
         agent.mark_failure()
         self.assertEqual(1, agent.error.failure_count)
 
@@ -546,7 +539,8 @@ class TestGuestAgent(UpdateTestCase):
         return
 
     @patch("azurelinuxagent.ga.update.GuestAgent._ensure_downloaded")
-    def test_unpack(self, mock_ensure):
+    @patch("azurelinuxagent.ga.update.GuestAgent._ensure_loaded")
+    def test_unpack(self, mock_loaded, mock_downloaded):
         agent = GuestAgent(path=self.agent_path)
         self.assertFalse(os.path.isdir(agent.get_agent_dir()))
         agent._unpack()
@@ -555,7 +549,8 @@ class TestGuestAgent(UpdateTestCase):
         return
 
     @patch("azurelinuxagent.ga.update.GuestAgent._ensure_downloaded")
-    def test_unpack_fail(self, mock_ensure):
+    @patch("azurelinuxagent.ga.update.GuestAgent._ensure_loaded")
+    def test_unpack_fail(self, mock_loaded, mock_downloaded):
         agent = GuestAgent(path=self.agent_path)
         self.assertFalse(os.path.isdir(agent.get_agent_dir()))
         os.remove(agent.get_agent_pkg_path())
@@ -563,7 +558,8 @@ class TestGuestAgent(UpdateTestCase):
         return
 
     @patch("azurelinuxagent.ga.update.GuestAgent._ensure_downloaded")
-    def test_load_manifest(self, mock_ensure):
+    @patch("azurelinuxagent.ga.update.GuestAgent._ensure_loaded")
+    def test_load_manifest(self, mock_loaded, mock_downloaded):
         agent = GuestAgent(path=self.agent_path)
         agent._unpack()
         agent._load_manifest()
@@ -572,7 +568,8 @@ class TestGuestAgent(UpdateTestCase):
         return
 
     @patch("azurelinuxagent.ga.update.GuestAgent._ensure_downloaded")
-    def test_load_manifest_missing(self, mock_ensure):
+    @patch("azurelinuxagent.ga.update.GuestAgent._ensure_loaded")
+    def test_load_manifest_missing(self, mock_loaded, mock_downloaded):
         agent = GuestAgent(path=self.agent_path)
         self.assertFalse(os.path.isdir(agent.get_agent_dir()))
         agent._unpack()
@@ -581,7 +578,8 @@ class TestGuestAgent(UpdateTestCase):
         return
 
     @patch("azurelinuxagent.ga.update.GuestAgent._ensure_downloaded")
-    def test_load_manifest_is_empty(self, mock_ensure):
+    @patch("azurelinuxagent.ga.update.GuestAgent._ensure_loaded")
+    def test_load_manifest_is_empty(self, mock_loaded, mock_downloaded):
         agent = GuestAgent(path=self.agent_path)
         self.assertFalse(os.path.isdir(agent.get_agent_dir()))
         agent._unpack()
@@ -593,7 +591,8 @@ class TestGuestAgent(UpdateTestCase):
         return
 
     @patch("azurelinuxagent.ga.update.GuestAgent._ensure_downloaded")
-    def test_load_manifest_is_malformed(self, mock_ensure):
+    @patch("azurelinuxagent.ga.update.GuestAgent._ensure_loaded")
+    def test_load_manifest_is_malformed(self, mock_loaded, mock_downloaded):
         agent = GuestAgent(path=self.agent_path)
         self.assertFalse(os.path.isdir(agent.get_agent_dir()))
         agent._unpack()
@@ -613,8 +612,9 @@ class TestGuestAgent(UpdateTestCase):
         return
 
     @patch("azurelinuxagent.ga.update.GuestAgent._ensure_downloaded")
+    @patch("azurelinuxagent.ga.update.GuestAgent._ensure_loaded")
     @patch("azurelinuxagent.ga.update.restutil.http_get")
-    def test_download(self, mock_http_get, mock_ensure):
+    def test_download(self, mock_http_get, mock_loaded, mock_downloaded):
         self.remove_agents()
         self.assertFalse(os.path.isdir(self.agent_path))
 
@@ -630,8 +630,9 @@ class TestGuestAgent(UpdateTestCase):
         return
 
     @patch("azurelinuxagent.ga.update.GuestAgent._ensure_downloaded")
+    @patch("azurelinuxagent.ga.update.GuestAgent._ensure_loaded")
     @patch("azurelinuxagent.ga.update.restutil.http_get")
-    def test_download_fail(self, mock_http_get, mock_ensure):
+    def test_download_fail(self, mock_http_get, mock_loaded, mock_downloaded):
         self.remove_agents()
         self.assertFalse(os.path.isdir(self.agent_path))
 
@@ -647,8 +648,9 @@ class TestGuestAgent(UpdateTestCase):
         return
 
     @patch("azurelinuxagent.ga.update.GuestAgent._ensure_downloaded")
+    @patch("azurelinuxagent.ga.update.GuestAgent._ensure_loaded")
     @patch("azurelinuxagent.ga.update.restutil.http_get")
-    def test_download_fallback(self, mock_http_get, mock_ensure):
+    def test_download_fallback(self, mock_http_get, mock_loaded, mock_downloaded):
         self.remove_agents()
         self.assertFalse(os.path.isdir(self.agent_path))
 
@@ -681,8 +683,12 @@ class TestGuestAgent(UpdateTestCase):
                           return_value=True):
             self.assertRaises(UpdateError, agent._download)
             self.assertEqual(mock_http_get.call_count, 4)
+
             self.assertEqual(mock_http_get.call_args_list[2][0][0], ext_uri)
+
             self.assertEqual(mock_http_get.call_args_list[3][0][0], art_uri)
+            a, k = mock_http_get.call_args_list[3]
+            self.assertEqual(False, k['use_proxy'])
 
             # ensure fallback works as expected
             with patch.object(HostPluginProtocol,
@@ -690,8 +696,16 @@ class TestGuestAgent(UpdateTestCase):
                               return_value=[art_uri, {}]):
                 self.assertRaises(UpdateError, agent._download)
                 self.assertEqual(mock_http_get.call_count, 6)
+
+                a, k = mock_http_get.call_args_list[3]
+                self.assertEqual(False, k['use_proxy'])
+
                 self.assertEqual(mock_http_get.call_args_list[4][0][0], ext_uri)
+                a, k = mock_http_get.call_args_list[4]
+
                 self.assertEqual(mock_http_get.call_args_list[5][0][0], art_uri)
+                a, k = mock_http_get.call_args_list[5]
+                self.assertEqual(False, k['use_proxy'])
 
     @patch("azurelinuxagent.ga.update.restutil.http_get")
     def test_ensure_downloaded(self, mock_http_get):
@@ -725,7 +739,7 @@ class TestGuestAgent(UpdateTestCase):
 
     @patch("azurelinuxagent.ga.update.GuestAgent._download")
     @patch("azurelinuxagent.ga.update.GuestAgent._unpack", side_effect=UpdateError)
-    def test_ensure_downloaded_unpack_fails(self, mock_download, mock_unpack):
+    def test_ensure_downloaded_unpack_fails(self, mock_unpack, mock_download):
         self.assertFalse(os.path.isdir(self.agent_path))
 
         pkg = ExtHandlerPackage(version=str(get_agent_version()))
@@ -740,7 +754,7 @@ class TestGuestAgent(UpdateTestCase):
     @patch("azurelinuxagent.ga.update.GuestAgent._download")
     @patch("azurelinuxagent.ga.update.GuestAgent._unpack")
     @patch("azurelinuxagent.ga.update.GuestAgent._load_manifest", side_effect=UpdateError)
-    def test_ensure_downloaded_load_manifest_fails(self, mock_download, mock_unpack, mock_manifest):
+    def test_ensure_downloaded_load_manifest_fails(self, mock_manifest, mock_unpack, mock_download):
         self.assertFalse(os.path.isdir(self.agent_path))
 
         pkg = ExtHandlerPackage(version=str(get_agent_version()))
@@ -755,10 +769,13 @@ class TestGuestAgent(UpdateTestCase):
     @patch("azurelinuxagent.ga.update.GuestAgent._download")
     @patch("azurelinuxagent.ga.update.GuestAgent._unpack")
     @patch("azurelinuxagent.ga.update.GuestAgent._load_manifest")
-    def test_ensure_download_skips_blacklisted(self, mock_download, mock_unpack, mock_manifest):
+    def test_ensure_download_skips_blacklisted(self, mock_manifest, mock_unpack, mock_download):
         agent = GuestAgent(path=self.agent_path)
+        self.assertEqual(0, mock_download.call_count)
+
         agent.clear_error()
         agent.mark_failure(is_fatal=True)
+        self.assertTrue(agent.is_blacklisted)
 
         pkg = ExtHandlerPackage(version=str(get_agent_version()))
         pkg.uris.append(ExtHandlerPackageUri())
@@ -769,7 +786,6 @@ class TestGuestAgent(UpdateTestCase):
         self.assertTrue(agent.is_blacklisted)
         self.assertEqual(0, mock_download.call_count)
         self.assertEqual(0, mock_unpack.call_count)
-        self.assertEqual(0, mock_manifest.call_count)
         return
 
 
@@ -812,6 +828,12 @@ class TestUpdate(UpdateTestCase):
         self.event_patch.stop()
         return
 
+    def _create_protocol(self, count=5, versions=None):
+        latest_version = self.prepare_agents(count=count)
+        if versions is None or len(versions) <= 0:
+            versions = [latest_version]
+        return ProtocolMock(versions=versions)
+
     def _test_upgrade_available(
             self,
             base_version=FlexibleVersion(AGENT_VERSION),
@@ -819,12 +841,9 @@ class TestUpdate(UpdateTestCase):
             versions=None,
             count=5):
 
-        latest_version = self.prepare_agents(count=count)
-        if versions is None or len(versions) <= 0:
-            versions = [latest_version]
-
         if protocol is None:
-            protocol = ProtocolMock(versions=versions)
+            protocol = self._create_protocol(count=count, versions=versions)
+
         self.update_handler.protocol_util = protocol
         conf.get_autoupdate_gafamily = Mock(return_value=protocol.family)
 
@@ -832,6 +851,16 @@ class TestUpdate(UpdateTestCase):
 
     def test_upgrade_available_returns_true_on_first_use(self):
         self.assertTrue(self._test_upgrade_available())
+        return
+
+    def test_upgrade_available_will_refresh_goal_state(self):
+        protocol = self._create_protocol()
+        protocol.emulate_stale_goal_state()
+        self.assertTrue(self._test_upgrade_available(protocol=protocol))
+        self.assertEqual(2, protocol.call_counts["get_vmagent_manifests"])
+        self.assertEqual(1, protocol.call_counts["get_vmagent_pkgs"])
+        self.assertEqual(1, protocol.call_counts["update_goal_state"])
+        self.assertTrue(protocol.goal_state_forced)
         return
 
     def test_get_latest_agent_excluded(self):
@@ -909,7 +938,7 @@ class TestUpdate(UpdateTestCase):
             v = a.version
         return
 
-    def _test_ensure_no_orphans(self, invocations=3, interval=ORPHAN_WAIT_INTERVAL):
+    def _test_ensure_no_orphans(self, invocations=3, interval=ORPHAN_WAIT_INTERVAL, pid_count=0):
         with patch.object(self.update_handler, 'osutil') as mock_util:
             # Note:
             # - Python only allows mutations of objects to which a function has
@@ -924,15 +953,20 @@ class TestUpdate(UpdateTestCase):
 
             mock_util.check_pid_alive = Mock(side_effect=iterator)
 
+            pid_files = self.update_handler._get_pid_files()
+            self.assertEqual(pid_count, len(pid_files))
+
             with patch('os.getpid', return_value=42):
                 with patch('time.sleep', return_value=None) as mock_sleep:
                     self.update_handler._ensure_no_orphans(orphan_wait_interval=interval)
+                    for pid_file in pid_files:
+                        self.assertFalse(os.path.exists(pid_file))
                     return mock_util.check_pid_alive.call_count, mock_sleep.call_count
         return
 
     def test_ensure_no_orphans(self):
         fileutil.write_file(os.path.join(self.tmp_dir, "0_waagent.pid"), ustr(41))
-        calls, sleeps = self._test_ensure_no_orphans(invocations=3)
+        calls, sleeps = self._test_ensure_no_orphans(invocations=3, pid_count=1)
         self.assertEqual(3, calls)
         self.assertEqual(2, sleeps)
         return
@@ -955,7 +989,8 @@ class TestUpdate(UpdateTestCase):
         with patch('os.kill') as mock_kill:
             calls, sleeps = self._test_ensure_no_orphans(
                                         invocations=4,
-                                        interval=3*GOAL_STATE_INTERVAL)
+                                        interval=3*GOAL_STATE_INTERVAL,
+                                        pid_count=1)
             self.assertEqual(3, calls)
             self.assertEqual(2, sleeps)
             self.assertEqual(1, mock_kill.call_count)
@@ -1066,26 +1101,20 @@ class TestUpdate(UpdateTestCase):
         return
 
     def test_get_pid_files(self):
-        previous_pid_file, pid_file, = self.update_handler._get_pid_files()
-        self.assertEqual(None, previous_pid_file)
-        self.assertEqual("0_waagent.pid", os.path.basename(pid_file))
+        pid_files = self.update_handler._get_pid_files()
+        self.assertEqual(0, len(pid_files))
         return
 
     def test_get_pid_files_returns_previous(self):
         for n in range(1250):
             fileutil.write_file(os.path.join(self.tmp_dir, str(n)+"_waagent.pid"), ustr(n+1))
-        previous_pid_file, pid_file, = self.update_handler._get_pid_files()
-        self.assertEqual("1249_waagent.pid", os.path.basename(previous_pid_file))
-        self.assertEqual("1250_waagent.pid", os.path.basename(pid_file))
+        pid_files = self.update_handler._get_pid_files()
+        self.assertEqual(1250, len(pid_files))
+
+        pid_dir, pid_name, pid_re = self.update_handler._get_pid_parts()
+        for p in pid_files:
+            self.assertTrue(pid_re.match(os.path.basename(p)))
         return
-
-    @patch('platform.linux_distribution', return_value=['Ubuntu', '16.10', 'yakkety'])
-    @patch('azurelinuxagent.ga.update.datetime')
-    def test_get_test_agent(self, mock_dt, mock_dist):
-        mock_dt.utcnow = Mock(return_value=datetime(2017, 1, 1, 0, 0, 5))
-        self.prepare_agent(AGENT_VERSION, mark_test=True)
-
-        self.assertNotEqual(None, self.update_handler.get_test_agent())
 
     def test_is_clean_start_returns_true_when_no_sentinal(self):
         self.assertFalse(os.path.isfile(self.update_handler._sentinal_file_path()))
@@ -1421,23 +1450,6 @@ class TestUpdate(UpdateTestCase):
         self.update_handler._upgrade_available = Mock(return_value=True)
         self._test_run(invocations=0, calls=[], enable_updates=True)
         return
-    
-    @patch('platform.linux_distribution', return_value=['Ubuntu', '16.10', 'yakkety'])
-    @patch('azurelinuxagent.ga.update.datetime')
-    def test_run_stops_if_test_agent_available(self, mock_dt, mock_dist):
-        mock_dt.utcnow = Mock(return_value=datetime(2017, 1, 1, 0, 0, 5))
-        self.prepare_agent(AGENT_VERSION, mark_test=True)
-
-        agent = GuestAgent(path=self.agent_dir(AGENT_VERSION))
-        agent.enable = Mock()
-        self.assertTrue(agent.is_test)
-        self.assertTrue(agent.in_slice)
-
-        with patch('azurelinuxagent.ga.update.UpdateHandler.get_test_agent',
-                return_value=agent) as mock_test:
-            self._test_run(invocations=0)
-            self.assertEqual(mock_test.call_count, 1)
-            self.assertEqual(agent.enable.call_count, 1)
 
     def test_run_stops_if_orphaned(self):
         with patch('os.getppid', return_value=1):
@@ -1521,8 +1533,9 @@ class TestUpdate(UpdateTestCase):
         for n in range(1112):
             fileutil.write_file(os.path.join(self.tmp_dir, str(n)+"_waagent.pid"), ustr(n+1))
         with patch('os.getpid', return_value=1112):
-            previous_pid_file, pid_file = self.update_handler._write_pid_file()
-            self.assertEqual("1111_waagent.pid", os.path.basename(previous_pid_file))
+            pid_files, pid_file = self.update_handler._write_pid_file()
+            self.assertEqual(1112, len(pid_files))
+            self.assertEqual("1111_waagent.pid", os.path.basename(pid_files[-1]))
             self.assertEqual("1112_waagent.pid", os.path.basename(pid_file))
             self.assertEqual(fileutil.read_file(pid_file), ustr(1112))
         return
@@ -1530,8 +1543,8 @@ class TestUpdate(UpdateTestCase):
     def test_write_pid_file_ignores_exceptions(self):
         with patch('azurelinuxagent.common.utils.fileutil.write_file', side_effect=Exception):
             with patch('os.getpid', return_value=42):
-                previous_pid_file, pid_file = self.update_handler._write_pid_file()
-                self.assertEqual(None, previous_pid_file)
+                pid_files, pid_file = self.update_handler._write_pid_file()
+                self.assertEqual(0, len(pid_files))
                 self.assertEqual(None, pid_file)
         return
 
@@ -1549,11 +1562,21 @@ class ProtocolMock(object):
     def __init__(self, family="TestAgent", etag=42, versions=None, client=None):
         self.family = family
         self.client = client
+        self.call_counts = {
+            "get_vmagent_manifests" : 0,
+            "get_vmagent_pkgs" : 0,
+            "update_goal_state" : 0
+        }
+        self.goal_state_is_stale = False
+        self.goal_state_forced = False
         self.etag = etag
         self.versions = versions if versions is not None else []
         self.create_manifests()
         self.create_packages()
         return
+
+    def emulate_stale_goal_state(self):
+        self.goal_state_is_stale = True
 
     def create_manifests(self):
         self.agent_manifests = VMAgentManifestList()
@@ -1585,11 +1608,23 @@ class ProtocolMock(object):
         return self
 
     def get_vmagent_manifests(self):
+        self.call_counts["get_vmagent_manifests"] += 1
+        if self.goal_state_is_stale:
+            self.goal_state_is_stale = False
+            raise ResourceGoneError()
         return self.agent_manifests, self.etag
 
     def get_vmagent_pkgs(self, manifest):
+        self.call_counts["get_vmagent_pkgs"] += 1
+        if self.goal_state_is_stale:
+            self.goal_state_is_stale = False
+            raise ResourceGoneError()
         return self.agent_packages
 
+    def update_goal_state(self, forced=False, max_retry=3):
+        self.call_counts["update_goal_state"] += 1
+        self.goal_state_forced = self.goal_state_forced or forced
+        return
 
 class ResponseMock(Mock):
     def __init__(self, status=restutil.httpclient.OK, response=None, reason=None):

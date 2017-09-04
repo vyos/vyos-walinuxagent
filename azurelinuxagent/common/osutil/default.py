@@ -40,6 +40,7 @@ import azurelinuxagent.common.utils.textutil as textutil
 from azurelinuxagent.common.exception import OSUtilError
 from azurelinuxagent.common.future import ustr
 from azurelinuxagent.common.utils.cryptutil import CryptUtil
+from azurelinuxagent.common.utils.flexible_version import FlexibleVersion
 
 __RULES_FILES__ = [ "/lib/udev/rules.d/75-persistent-net-generator.rules",
                     "/etc/udev/rules.d/70-persistent-net.rules" ]
@@ -50,10 +51,20 @@ for all distros. Each concrete distro classes could overwrite default behavior
 if needed.
 """
 
+IPTABLES_VERSION_PATTERN = re.compile("^[^\d\.]*([\d\.]+).*$")
+IPTABLES_VERSION = "iptables --version"
+IPTABLES_LOCKING_VERSION = FlexibleVersion('1.4.21')
+
+FIREWALL_ACCEPT = "iptables {0} -t security -{1} OUTPUT -d {2} -p tcp -m owner --uid-owner {3} -j ACCEPT"
+FIREWALL_DROP = "iptables {0} -t security -{1} OUTPUT -d {2} -p tcp -j DROP"
+FIREWALL_LIST = "iptables {0} -t security -L"
+
+_enable_firewall = True
+
 DMIDECODE_CMD = 'dmidecode --string system-uuid'
 PRODUCT_ID_FILE = '/sys/class/dmi/id/product_uuid'
 UUID_PATTERN = re.compile(
-    '^\s*[A-F0-9]{8}(?:\-[A-F0-9]{4}){3}\-[A-F0-9]{12}\s*$',
+    r'^\s*[A-F0-9]{8}(?:\-[A-F0-9]{4}){3}\-[A-F0-9]{12}\s*$',
     re.IGNORECASE)
 
 class DefaultOSUtil(object):
@@ -62,6 +73,113 @@ class DefaultOSUtil(object):
         self.agent_conf_file_path = '/etc/waagent.conf'
         self.selinux = None
         self.disable_route_warning = False
+
+    def enable_firewall(self, dst_ip=None, uid=None):
+
+        # If a previous attempt threw an exception, do not retry
+        global _enable_firewall
+        if not _enable_firewall:
+            return False
+
+        try:
+            if dst_ip is None or uid is None:
+                msg = "Missing arguments to enable_firewall"
+                logger.warn(msg)
+                raise Exception(msg)
+
+            # Determine if iptables will serialize access
+            rc, output = shellutil.run_get_output(IPTABLES_VERSION)
+            if rc != 0:
+                msg = "Unable to determine version of iptables"
+                logger.warn(msg)
+                raise Exception(msg)
+
+            m = IPTABLES_VERSION_PATTERN.match(output)
+            if m is None:
+                msg = "iptables did not return version information"
+                logger.warn(msg)
+                raise Exception(msg)
+
+            wait = "-w" \
+                    if FlexibleVersion(m.group(1)) >= IPTABLES_LOCKING_VERSION \
+                    else ""
+
+            # If the DROP rule exists, make no changes
+            drop_rule = FIREWALL_DROP.format(wait, "C", dst_ip)
+
+            if shellutil.run(drop_rule, chk_err=False) == 0:
+                logger.verbose("Firewall appears established")
+                return True
+
+            # Otherwise, append both rules
+            accept_rule = FIREWALL_ACCEPT.format(wait, "A", dst_ip, uid)
+            drop_rule = FIREWALL_DROP.format(wait, "A", dst_ip)
+
+            if shellutil.run(accept_rule) != 0:
+                msg = "Unable to add ACCEPT firewall rule '{0}'".format(
+                    accept_rule)
+                logger.warn(msg)
+                raise Exception(msg)
+
+            if shellutil.run(drop_rule) != 0:
+                msg = "Unable to add DROP firewall rule '{0}'".format(
+                    drop_rule)
+                logger.warn(msg)
+                raise Exception(msg)
+
+            logger.info("Successfully added Azure fabric firewall rules")
+
+            rc, output = shellutil.run_get_output(FIREWALL_LIST.format(wait))
+            if rc == 0:
+                logger.info("Firewall rules:\n{0}".format(output))
+            else:
+                logger.warn("Listing firewall rules failed: {0}".format(output))
+
+            return True
+
+        except Exception as e:
+            _enable_firewall = False
+            logger.info("Unable to establish firewall -- "
+                        "no further attempts will be made: "
+                        "{0}".format(ustr(e)))
+            return False
+
+    def _correct_instance_id(self, id):
+        '''
+        Azure stores the instance ID with an incorrect byte ordering for the
+        first parts. For example, the ID returned by the metadata service:
+
+            D0DF4C54-4ECB-4A4B-9954-5BDF3ED5C3B8
+
+        will be found as:
+
+            544CDFD0-CB4E-4B4A-9954-5BDF3ED5C3B8
+
+        This code corrects the byte order such that it is consistent with
+        that returned by the metadata service.
+        '''
+
+        if not UUID_PATTERN.match(id):
+            return id
+
+        parts = id.split('-')
+        return '-'.join([
+                textutil.swap_hexstring(parts[0], width=2),
+                textutil.swap_hexstring(parts[1], width=2),
+                textutil.swap_hexstring(parts[2], width=2),
+                parts[3],
+                parts[4]
+            ])
+
+    def is_current_instance_id(self, id_that):
+        '''
+        Compare two instance IDs for equality, but allow that some IDs
+        may have been persisted using the incorrect byte ordering.
+        '''
+        id_this = self.get_instance_id()
+        return id_that == id_this or \
+            id_that == self._correct_instance_id(id_this)
+
 
     def get_agent_conf_file_path(self):
         return self.agent_conf_file_path
@@ -74,13 +192,14 @@ class DefaultOSUtil(object):
         If nothing works (for old VMs), return the empty string
         '''
         if os.path.isfile(PRODUCT_ID_FILE):
-            return fileutil.read_file(PRODUCT_ID_FILE).strip()
+            s = fileutil.read_file(PRODUCT_ID_FILE).strip()
 
-        rc, s = shellutil.run_get_output(DMIDECODE_CMD)
-        if rc != 0 or UUID_PATTERN.match(s) is None:
-            return ""
+        else:
+            rc, s = shellutil.run_get_output(DMIDECODE_CMD)
+            if rc != 0 or UUID_PATTERN.match(s) is None:
+                return ""
 
-        return s.strip()
+        return self._correct_instance_id(s.strip())
 
     def get_userentry(self, username):
         try:
@@ -158,10 +277,12 @@ class DefaultOSUtil(object):
                 fileutil.append_file(sudoers_file, sudoers)
             sudoer = None
             if nopasswd:
-                sudoer = "{0} ALL=(ALL) NOPASSWD: ALL\n".format(username)
+                sudoer = "{0} ALL=(ALL) NOPASSWD: ALL".format(username)
             else:
-                sudoer = "{0} ALL=(ALL) ALL\n".format(username)
-            fileutil.append_file(sudoers_wagent, sudoer)
+                sudoer = "{0} ALL=(ALL) ALL".format(username)
+            if not os.path.isfile(sudoers_wagent) or \
+                fileutil.findstr_in_file(sudoers_wagent, sudoer) is None:
+                fileutil.append_file(sudoers_wagent, "{0}\n".format(sudoer))
             fileutil.chmod(sudoers_wagent, 0o440)
         else:
             #Remove user from sudoers
@@ -334,7 +455,7 @@ class DefaultOSUtil(object):
             return_code, err = self.mount(dvd_device,
                                           mount_point,
                                           option="-o ro -t udf,iso9660",
-                                          chk_err=chk_err)
+                                          chk_err=False)
             if return_code == 0:
                 logger.info("Successfully mounted dvd")
                 return
@@ -718,7 +839,7 @@ class DefaultOSUtil(object):
         for conf_file in dhclient_files:
             if not os.path.isfile(conf_file):
                 continue
-            if fileutil.findstr_in_file(conf_file, autosend):
+            if fileutil.findre_in_file(conf_file, autosend):
                 #Return if auto send host-name is configured
                 return
             fileutil.update_conf_file(conf_file,

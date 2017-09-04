@@ -25,30 +25,34 @@ wireserver_url = '168.63.129.16'
 
 @patch("time.sleep")
 @patch("azurelinuxagent.common.protocol.wire.CryptUtil")
-@patch("azurelinuxagent.common.protocol.wire.restutil")
 class TestWireProtocolGetters(AgentTestCase):
-    def _test_getters(self, test_data, mock_restutil, MockCryptUtil, _):
-        mock_restutil.http_get.side_effect = test_data.mock_http_get
+
+    def setUp(self):
+        super(TestWireProtocolGetters, self).setUp()
+        HostPluginProtocol.set_default_channel(False)
+    
+    def _test_getters(self, test_data, MockCryptUtil, _):
         MockCryptUtil.side_effect = test_data.mock_crypt_util
 
-        protocol = WireProtocol(wireserver_url)
-        protocol.detect()
-        protocol.get_vminfo()
-        protocol.get_certs()
-        ext_handlers, etag = protocol.get_ext_handlers()
-        for ext_handler in ext_handlers.extHandlers:
-            protocol.get_ext_handler_pkgs(ext_handler)
+        with patch.object(restutil, 'http_get', test_data.mock_http_get):
+            protocol = WireProtocol(wireserver_url)
+            protocol.detect()
+            protocol.get_vminfo()
+            protocol.get_certs()
+            ext_handlers, etag = protocol.get_ext_handlers()
+            for ext_handler in ext_handlers.extHandlers:
+                protocol.get_ext_handler_pkgs(ext_handler)
 
-        crt1 = os.path.join(self.tmp_dir,
-                            '33B0ABCE4673538650971C10F7D7397E71561F35.crt')
-        crt2 = os.path.join(self.tmp_dir,
-                            '4037FBF5F1F3014F99B5D6C7799E9B20E6871CB3.crt')
-        prv2 = os.path.join(self.tmp_dir,
-                            '4037FBF5F1F3014F99B5D6C7799E9B20E6871CB3.prv')
+            crt1 = os.path.join(self.tmp_dir,
+                                '33B0ABCE4673538650971C10F7D7397E71561F35.crt')
+            crt2 = os.path.join(self.tmp_dir,
+                                '4037FBF5F1F3014F99B5D6C7799E9B20E6871CB3.crt')
+            prv2 = os.path.join(self.tmp_dir,
+                                '4037FBF5F1F3014F99B5D6C7799E9B20E6871CB3.prv')
 
-        self.assertTrue(os.path.isfile(crt1))
-        self.assertTrue(os.path.isfile(crt2))
-        self.assertTrue(os.path.isfile(prv2))
+            self.assertTrue(os.path.isfile(crt1))
+            self.assertTrue(os.path.isfile(crt2))
+            self.assertTrue(os.path.isfile(prv2))
 
     def test_getters(self, *args):
         """Normal case"""
@@ -70,8 +74,21 @@ class TestWireProtocolGetters(AgentTestCase):
         test_data = WireProtocolData(DATA_FILE_EXT_NO_PUBLIC)
         self._test_getters(test_data, *args)
 
+    def test_getters_with_stale_goal_state(self, *args):
+        test_data = WireProtocolData(DATA_FILE)
+        test_data.emulate_stale_goal_state = True
+
+        self._test_getters(test_data, *args)
+        # Ensure HostPlugin was invoked
+        self.assertEqual(1, test_data.call_counts["/versions"])
+        self.assertEqual(2, test_data.call_counts["extensionArtifact"])
+        # Ensure the expected number of HTTP calls were made
+        # -- Tracking calls to retrieve GoalState is problematic since it is
+        #    fetched often; however, the dependent documents, such as the
+        #    HostingEnvironmentConfig, will be retrieved the expected number
+        self.assertEqual(2, test_data.call_counts["hostingenvuri"])
+
     def test_call_storage_kwargs(self,
-                                 mock_restutil,
                                  mock_cryptutil,
                                  mock_sleep):
         from azurelinuxagent.common.utils import restutil
@@ -83,32 +100,32 @@ class TestWireProtocolGetters(AgentTestCase):
             # no kwargs -- Default to True
             WireClient.call_storage_service(http_req)
 
-            # kwargs, no chk_proxy -- Default to True
+            # kwargs, no use_proxy -- Default to True
             WireClient.call_storage_service(http_req,
                                             url,
                                             headers)
 
-            # kwargs, chk_proxy None -- Default to True
+            # kwargs, use_proxy None -- Default to True
             WireClient.call_storage_service(http_req,
                                             url,
                                             headers,
-                                            chk_proxy=None)
+                                            use_proxy=None)
 
-            # kwargs, chk_proxy False -- Keep False
+            # kwargs, use_proxy False -- Keep False
             WireClient.call_storage_service(http_req,
                                             url,
                                             headers,
-                                            chk_proxy=False)
+                                            use_proxy=False)
 
-            # kwargs, chk_proxy True -- Keep True
+            # kwargs, use_proxy True -- Keep True
             WireClient.call_storage_service(http_req,
                                             url,
                                             headers,
-                                            chk_proxy=True)
+                                            use_proxy=True)
             # assert
             self.assertTrue(http_patch.call_count == 5)
             for i in range(0,5):
-                c = http_patch.call_args_list[i][-1]['chk_proxy']
+                c = http_patch.call_args_list[i][-1]['use_proxy']
                 self.assertTrue(c == (True if i != 3 else False))
 
     def test_status_blob_parsing(self, *args):

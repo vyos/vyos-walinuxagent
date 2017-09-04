@@ -26,7 +26,10 @@ import azurelinuxagent.common.conf as conf
 import azurelinuxagent.common.logger as logger
 
 from azurelinuxagent.common.dhcp import get_dhcp_handler
+from azurelinuxagent.common.event import add_periodic, WALAEventOperation
 from azurelinuxagent.common.osutil import get_osutil
+from azurelinuxagent.common.protocol import get_protocol_util
+from azurelinuxagent.common.version import AGENT_NAME, CURRENT_VERSION
 
 def get_env_handler():
     return EnvHandler()
@@ -42,6 +45,7 @@ class EnvHandler(object):
     def __init__(self):
         self.osutil = get_osutil()
         self.dhcp_handler = get_dhcp_handler()
+        self.protocol_util = get_protocol_util()
         self.stopped = True
         self.hostname = None
         self.dhcpid = None
@@ -64,17 +68,35 @@ class EnvHandler(object):
 
     def monitor(self):
         """
+        Monitor firewall rules
         Monitor dhcp client pid and hostname.
         If dhcp clinet process re-start has occurred, reset routes.
         """
+        protocol = self.protocol_util.get_protocol()
         while not self.stopped:
             self.osutil.remove_rules_files()
+
+            if conf.enable_firewall():
+                success = self.osutil.enable_firewall(
+                                dst_ip=protocol.endpoint,
+                                uid=os.getuid())
+                add_periodic(
+                    logger.EVERY_HOUR,
+                    AGENT_NAME,
+                    version=CURRENT_VERSION,
+                    op=WALAEventOperation.Firewall,
+                    is_success=success,
+                    log_event=True)
+
             timeout = conf.get_root_device_scsi_timeout()
             if timeout is not None:
                 self.osutil.set_scsi_disks_timeout(timeout)
+
             if conf.get_monitor_hostname():
                 self.handle_hostname_update()
+
             self.handle_dhclient_restart()
+
             time.sleep(5)
 
     def handle_hostname_update(self):
