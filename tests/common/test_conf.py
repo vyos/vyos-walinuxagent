@@ -48,6 +48,7 @@ class TestConf(AgentTestCase):
         "OS.EnableFIPS" : True,
         "OS.RootDeviceScsiTimeout" : '300',
         "OS.OpensslPath" : '/usr/bin/openssl',
+        "OS.SshClientAliveInterval" : 42,
         "OS.SshDir" : "/notareal/path",
         "HttpProxy.Host" : None,
         "HttpProxy.Port" : None,
@@ -64,7 +65,7 @@ class TestConf(AgentTestCase):
         "AutoUpdate.GAFamily" : "Prod",
         "EnableOverProvisioning" : False,
         "OS.AllowHTTP" : False,
-        "OS.EnableFirewall" : True
+        "OS.EnableFirewall" : False
     }
 
     def setUp(self):
@@ -77,6 +78,7 @@ class TestConf(AgentTestCase):
     def test_key_value_handling(self):
         self.assertEqual("Value1", self.conf.get("FauxKey1", "Bad"))
         self.assertEqual("Value2 Value2", self.conf.get("FauxKey2", "Bad"))
+        self.assertEqual("delalloc,rw,noatime,nobarrier,users,mode=777", self.conf.get("FauxKey3", "Bad"))
 
     def test_get_ssh_dir(self):
         self.assertTrue(get_ssh_dir(self.conf).startswith("/notareal/path"))
@@ -109,4 +111,5 @@ class TestConf(AgentTestCase):
         for k in TestConf.EXPECTED_CONFIGURATION.keys():
             self.assertEqual(
                 TestConf.EXPECTED_CONFIGURATION[k],
-                configuration[k])
+                configuration[k],
+                k)

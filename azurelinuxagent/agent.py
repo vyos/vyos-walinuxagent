@@ -63,6 +63,9 @@ class Agent(object):
                                  path="/var/log/waagent.log")
         logger.add_logger_appender(logger.AppenderType.CONSOLE, level,
                                  path="/dev/console")
+        logger.add_logger_appender(logger.AppenderType.TELEMETRY,
+                                   logger.LogLevel.WARNING,
+                                   path=event.add_log_event)
 
         ext_log_dir = conf.get_ext_log_dir()
         try:
@@ -144,7 +147,7 @@ def main(args=[]):
     if command == "version":
         version()
     elif command == "help":
-        usage()
+        print(usage())
     elif command == "start":
         start(conf_file_path=conf_file_path)
     else:
@@ -228,15 +231,16 @@ def version():
 
 def usage():
     """
-    Show agent usage
+    Return agent usage message
     """
-    print("")
-    print((("usage: {0} [-verbose] [-force] [-help] "
+    s  = "\n"
+    s += ("usage: {0} [-verbose] [-force] [-help] "
            "-configuration-path:<path to configuration file>"
            "-deprovision[+user]|-register-service|-version|-daemon|-start|"
-           "-run-exthandlers]"
-           "").format(sys.argv[0])))
-    print("")
+           "-run-exthandlers|-show-configuration]"
+           "").format(sys.argv[0])
+    s += "\n"
+    return s
 
 def start(conf_file_path=None):
     """

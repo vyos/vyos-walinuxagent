@@ -21,9 +21,11 @@ import glob
 import json
 import os
 import platform
+import random
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import time
@@ -43,6 +45,7 @@ from azurelinuxagent.common.event import add_event, add_periodic, \
                                     WALAEventOperation
 from azurelinuxagent.common.exception import ProtocolError, \
                                             ResourceGoneError, \
+                                            RestartError, \
                                             UpdateError
 from azurelinuxagent.common.future import ustr
 from azurelinuxagent.common.osutil import get_osutil
@@ -60,7 +63,7 @@ from azurelinuxagent.ga.exthandlers import HandlerManifest
 
 AGENT_ERROR_FILE = "error.json" # File name for agent error record
 AGENT_MANIFEST_FILE = "HandlerManifest.json"
-AGENT_SUPPORTED_FILE = "supported.json"
+AGENT_PARTITION_FILE = "partition"
 
 CHILD_HEALTH_INTERVAL = 15 * 60
 CHILD_LAUNCH_INTERVAL = 5 * 60
@@ -71,9 +74,17 @@ MAX_FAILURE = 3 # Max failure allowed for agent before blacklisted
 
 GOAL_STATE_INTERVAL = 3
 
-ORPHAN_WAIT_INTERVAL = 15 * 60 * 60
+ORPHAN_WAIT_INTERVAL = 15 * 60
 
 AGENT_SENTINAL_FILE = "current_version"
+
+READONLY_FILE_GLOBS = [
+    "*.crt",
+    "*.p7m",
+    "*.pem",
+    "*.prv",
+    "ovf-env.xml"
+]
 
 def get_update_handler():
     return UpdateHandler()
@@ -101,7 +112,6 @@ class UpdateHandler(object):
         self.child_process = None
 
         self.signal_handler = None
-        return
 
     def run_latest(self, child_args=None):
         """
@@ -233,36 +243,43 @@ class UpdateHandler(object):
         This is the main loop which watches for agent and extension updates.
         """
 
-        logger.info(u"Agent {0} is running as the goal state agent",
-                    CURRENT_AGENT)
-
-        # Launch monitoring threads
-        from azurelinuxagent.ga.monitor import get_monitor_handler
-        get_monitor_handler().run()
-
-        from azurelinuxagent.ga.env import get_env_handler
-        get_env_handler().run()
-
-        from azurelinuxagent.ga.exthandlers import get_exthandlers_handler, migrate_handler_state
-        exthandlers_handler = get_exthandlers_handler()
-        migrate_handler_state()
-
         try:
+            logger.info(u"Agent {0} is running as the goal state agent",
+                        CURRENT_AGENT)
+
+            # Launch monitoring threads
+            from azurelinuxagent.ga.monitor import get_monitor_handler
+            get_monitor_handler().run()
+
+            from azurelinuxagent.ga.env import get_env_handler
+            get_env_handler().run()
+
+            from azurelinuxagent.ga.exthandlers import get_exthandlers_handler, migrate_handler_state
+            exthandlers_handler = get_exthandlers_handler()
+            migrate_handler_state()
+
             self._ensure_no_orphans()
             self._emit_restart_event()
+            self._ensure_partition_assigned()
+            self._ensure_readonly_files()
 
             while self.running:
                 if self._is_orphaned:
-                    logger.info("Goal state agent {0} was orphaned -- exiting",
+                    logger.info("Agent {0} is an orphan -- exiting",
                                 CURRENT_AGENT)
                     break
 
                 if self._upgrade_available():
-                    if len(self.agents) > 0:
+                    available_agent = self.get_latest_agent()
+                    if available_agent is None:
                         logger.info(
-                            u"Agent {0} discovered {1} as an update and will exit",
+                            "Agent {0} is reverting to the installed agent -- exiting",
+                            CURRENT_AGENT)
+                    else:
+                        logger.info(
+                            u"Agent {0} discovered update {1} -- exiting",
                             CURRENT_AGENT,
-                            self.agents[0].name)
+                            available_agent.name)
                     break
 
                 utc_start = datetime.utcnow()
@@ -271,20 +288,24 @@ class UpdateHandler(object):
                 exthandlers_handler.run()
 
                 if last_etag != exthandlers_handler.last_etag:
+                    self._ensure_readonly_files()
                     add_event(
                         AGENT_NAME,
                         version=CURRENT_VERSION,
                         op=WALAEventOperation.ProcessGoalState,
                         is_success=True,
                         duration=elapsed_milliseconds(utc_start),
+                        message="Incarnation {0}".format(
+                                            exthandlers_handler.last_etag),
                         log_event=True)
 
                 time.sleep(GOAL_STATE_INTERVAL)
 
         except Exception as e:
-            logger.warn(u"Agent {0} failed with exception: {1}",
-                        CURRENT_AGENT,
-                        ustr(e))
+            msg = u"Agent {0} failed with exception: {1}".format(
+                CURRENT_AGENT, ustr(e))
+            self._set_sentinal(msg=msg)
+            logger.warn(msg)
             logger.warn(traceback.format_exc())
             sys.exit(1)
             # additional return here because sys.exit is mocked in unit tests
@@ -338,17 +359,21 @@ class UpdateHandler(object):
         return available_agents[0] if len(available_agents) >= 1 else None
 
     def _emit_restart_event(self):
-        if not self._is_clean_start:
-            msg = u"{0} did not terminate cleanly".format(CURRENT_AGENT)
-            logger.info(msg)
-            add_event(
-                AGENT_NAME,
-                version=CURRENT_VERSION,
-                op=WALAEventOperation.Restart,
-                is_success=False,
-                message=msg)
+        try:
+            if not self._is_clean_start:
+                msg = u"Agent did not terminate cleanly: {0}".format(
+                            fileutil.read_file(self._sentinal_file_path()))
+                logger.info(msg)
+                add_event(
+                    AGENT_NAME,
+                    version=CURRENT_VERSION,
+                    op=WALAEventOperation.Restart,
+                    is_success=False,
+                    message=msg)
+        except Exception:
+            pass
 
-        self._set_sentinal() 
+        self._set_sentinal(msg="Starting")
         return
 
     def _ensure_no_orphans(self, orphan_wait_interval=ORPHAN_WAIT_INTERVAL):
@@ -382,6 +407,26 @@ class UpdateHandler(object):
                     ustr(e))
         return
 
+    def _ensure_partition_assigned(self):
+        """
+        Assign the VM to a partition (0 - 99). Downloaded updates may be configured
+        to run on only some VMs; the assigned partition determines eligibility.
+        """
+        if not os.path.exists(self._partition_file):
+            partition = ustr(int(datetime.utcnow().microsecond / 10000))
+            fileutil.write_file(self._partition_file, partition)
+            add_event(
+                AGENT_NAME,
+                version=CURRENT_VERSION,
+                op=WALAEventOperation.Partition,
+                is_success=True,
+                message=partition)
+
+    def _ensure_readonly_files(self):
+        for g in READONLY_FILE_GLOBS:
+            for path in glob.iglob(os.path.join(conf.get_lib_dir(), g)):
+                os.chmod(path, stat.S_IRUSR)
+
     def _evaluate_agent_health(self, latest_agent):
         """
         Evaluate the health of the selected agent: If it is restarting
@@ -412,7 +457,6 @@ class UpdateHandler(object):
 
     def _filter_blacklisted_agents(self):
         self.agents = [agent for agent in self.agents if not agent.is_blacklisted]
-        return
 
     def _find_agents(self):
         """
@@ -447,19 +491,7 @@ class UpdateHandler(object):
 
     @property
     def _is_clean_start(self):
-        if not os.path.isfile(self._sentinal_file_path()):
-            return True
-
-        try:
-            if fileutil.read_file(self._sentinal_file_path()) != CURRENT_AGENT:
-                return True
-        except Exception as e:
-            logger.warn(
-                u"Exception reading sentinal file {0}: {1}",
-                self._sentinal_file_path(),
-                str(e))
-
-        return False
+        return not os.path.isfile(self._sentinal_file_path())
 
     @property
     def _is_orphaned(self):
@@ -472,10 +504,28 @@ class UpdateHandler(object):
 
         return fileutil.read_file(conf.get_agent_pid_file_path()) != ustr(parent_pid)
 
+    def _is_version_eligible(self, version):
+        # Ensure the installed version is always eligible
+        if version == CURRENT_VERSION and is_current_agent_installed():
+            return True
+
+        for agent in self.agents:
+            if agent.version == version:
+                return agent.is_available
+
+        return False
+
     def _load_agents(self):
         path = os.path.join(conf.get_lib_dir(), "{0}-*".format(AGENT_NAME))
         return [GuestAgent(path=agent_dir)
                         for agent_dir in glob.iglob(path) if os.path.isdir(agent_dir)]
+
+    def _partition(self):
+        return int(fileutil.read_file(self._partition_file))
+
+    @property
+    def _partition_file(self):
+        return os.path.join(conf.get_lib_dir(), AGENT_PARTITION_FILE)
 
     def _purge_agents(self):
         """
@@ -485,8 +535,8 @@ class UpdateHandler(object):
         path = os.path.join(conf.get_lib_dir(), "{0}-*".format(AGENT_NAME))
 
         known_versions = [agent.version for agent in self.agents]
-        if not is_current_agent_installed() and CURRENT_VERSION not in known_versions:
-            logger.warn(
+        if CURRENT_VERSION not in known_versions:
+            logger.info(
                 u"Running Agent {0} was not found in the agent manifest - adding to list",
                 CURRENT_VERSION)
             known_versions.append(CURRENT_VERSION)
@@ -511,9 +561,11 @@ class UpdateHandler(object):
         self.agents.sort(key=lambda agent: agent.version, reverse=True)
         return
 
-    def _set_sentinal(self, agent=CURRENT_AGENT):
+    def _set_sentinal(self, agent=CURRENT_AGENT, msg="Unknown cause"):
         try:
-            fileutil.write_file(self._sentinal_file_path(), agent)
+            fileutil.write_file(
+                self._sentinal_file_path(),
+                "[{0}] [{1}]".format(agent, msg))
         except Exception as e:
             logger.warn(
                 u"Exception writing sentinal file {0}: {1}",
@@ -599,16 +651,18 @@ class UpdateHandler(object):
                 self._purge_agents()
                 self._filter_blacklisted_agents()
 
-                # Return True if more recent agents are available
-                return len(self.agents) > 0 and \
-                            self.agents[0].version > base_version
+                # Return True if current agent is no longer available or an
+                # agent with a higher version number is available
+                return not self._is_version_eligible(base_version) \
+                    or (len(self.agents) > 0 \
+                        and self.agents[0].version > base_version)
 
             except Exception as e:
                 if isinstance(e, ResourceGoneError):
                     continue
 
                 msg = u"Exception retrieving agent manifests: {0}".format(
-                            ustr(e))
+                            ustr(traceback.format_exc()))
                 logger.warn(msg)
                 add_event(
                     AGENT_NAME,
@@ -667,14 +721,19 @@ class GuestAgent(object):
 
         self.error = GuestAgentError(self.get_agent_error_file())
         self.error.load()
-        self.supported = Supported(self.get_agent_supported_file())
-        self.supported.load()
 
         try:
             self._ensure_downloaded()
             self._ensure_loaded()
         except Exception as e:
             if isinstance(e, ResourceGoneError):
+                raise
+
+            # The agent was improperly blacklisting versions due to a timeout
+            # encountered while downloading a later version. Errors of type
+            # socket.error are IOError, so this should provide sufficient
+            # protection against a large class of I/O operation failures.
+            if isinstance(e, IOError):
                 raise
 
             # Note the failure, blacklist the agent if the package downloaded
@@ -691,7 +750,6 @@ class GuestAgent(object):
                 op=WALAEventOperation.Install,
                 is_success=False,
                 message=msg)
-        return
 
     @property
     def name(self):
@@ -712,13 +770,9 @@ class GuestAgent(object):
     def get_agent_pkg_path(self):
         return ".".join((os.path.join(conf.get_lib_dir(), self.name), "zip"))
 
-    def get_agent_supported_file(self):
-        return os.path.join(conf.get_lib_dir(), self.name, AGENT_SUPPORTED_FILE)
-
     def clear_error(self):
         self.error.clear()
         self.error.save()
-        return
 
     @property
     def is_available(self):
@@ -730,15 +784,8 @@ class GuestAgent(object):
 
     @property
     def is_downloaded(self):
-        return self.is_blacklisted or os.path.isfile(self.get_agent_manifest_path())
-
-    @property
-    def _is_optional(self):
-        return self.error is not None and self.error.is_sentinel and self.supported.is_supported
-
-    @property
-    def _in_slice(self):
-        return self.supported.is_supported and self.supported.in_slice
+        return self.is_blacklisted or \
+                os.path.isfile(self.get_agent_manifest_path())
 
     def mark_failure(self, is_fatal=False):
         try:
@@ -750,21 +797,6 @@ class GuestAgent(object):
                 logger.warn(u"Agent {0} is permanently blacklisted", self.name)
         except Exception as e:
             logger.warn(u"Agent {0} failed recording error state: {1}", self.name, ustr(e))
-        return
-
-    def _enable(self):
-        # Enable optional agents if within the "slice"
-        # - The "slice" is a percentage of the agent to execute
-        # - Blacklist out-of-slice agents to prevent reconsideration
-        if self._is_optional:
-            if self._in_slice:
-                self.error.clear()
-                self.error.save()
-                logger.info(u"Enabled optional Agent {0}", self.name)
-            else:
-                self.mark_failure(is_fatal=True)
-                logger.info(u"Optional Agent {0} not in slice", self.name)
-        return
 
     def _ensure_downloaded(self):
         logger.verbose(u"Ensuring Agent {0} is downloaded", self.name)
@@ -788,18 +820,15 @@ class GuestAgent(object):
             op=WALAEventOperation.Install,
             is_success=True,
             message=msg)
-        return
 
     def _ensure_loaded(self):
         self._load_manifest()
         self._load_error()
-        self._load_supported()
-
-        self._enable()
-        return
 
     def _download(self):
-        for uri in self.pkg.uris:
+        uris_shuffled = self.pkg.uris
+        random.shuffle(uris_shuffled)
+        for uri in uris_shuffled:
             if not HostPluginProtocol.is_default_channel() and self._fetch(uri.uri):
                 break
 
@@ -838,8 +867,6 @@ class GuestAgent(object):
                 message=msg)
             raise UpdateError(msg)
 
-        return
-
     def _fetch(self, uri, headers=None, use_proxy=True):
         package = None
         try:
@@ -871,14 +898,6 @@ class GuestAgent(object):
             logger.verbose(u"Agent {0} error state: {1}", self.name, ustr(self.error))
         except Exception as e:
             logger.warn(u"Agent {0} failed loading error state: {1}", self.name, ustr(e))
-        return
-
-    def _load_supported(self):
-        try:
-            self.supported = Supported(self.get_agent_supported_file())
-            self.supported.load()
-        except Exception as e:
-            self.supported = Supported()
 
     def _load_manifest(self):
         path = self.get_agent_manifest_path()
@@ -976,10 +995,6 @@ class GuestAgentError(object):
     def is_blacklisted(self):
         return self.was_fatal or self.failure_count >= MAX_FAILURE
 
-    @property
-    def is_sentinel(self):
-        return self.was_fatal and self.last_failure == 0.0
-
     def load(self):
         if self.path is not None and os.path.isfile(self.path):
             with open(self.path, 'r') as f:
@@ -1015,60 +1030,3 @@ class GuestAgentError(object):
             self.last_failure,
             self.failure_count,
             self.was_fatal)
-
-class Supported(object):
-    def __init__(self, path):
-        if path is None:
-            raise UpdateError(u"Supported requires a path")
-        self.path = path
-        self.distributions = {}
-        return
-
-    @property
-    def is_supported(self):
-        return self._supported_distribution is not None
-
-    @property
-    def in_slice(self):
-        d = self._supported_distribution
-        return d is not None and d.in_slice
-
-    def load(self):
-        self.distributions = {}
-        try:
-            if self.path is not None and os.path.isfile(self.path):
-                j = json.loads(fileutil.read_file(self.path))
-                for d in j:
-                    self.distributions[d] = SupportedDistribution(j[d])
-        except Exception as e:
-            logger.warn("Failed JSON parse of {0}: {1}".format(self.path, e))
-        return
-
-    @property
-    def _supported_distribution(self):
-        for d in self.distributions:
-            dd = self.distributions[d]
-            if dd.is_supported:
-                return dd
-        return None
-
-class SupportedDistribution(object):
-    def __init__(self, s):
-        if s is None or not isinstance(s, dict):
-            raise UpdateError(u"SupportedDisribution requires a dictionary")
-
-        self.slice = s['slice']
-        self.versions = s['versions']
-
-    @property
-    def is_supported(self):
-        d = ','.join(platform.linux_distribution())
-        for v in self.versions:
-            if re.match(v, d):
-                return True
-        return False
-
-    @property
-    def in_slice(self):
-        n = int((60 * self.slice) / 100)
-        return (n - datetime.utcnow().second) > 0

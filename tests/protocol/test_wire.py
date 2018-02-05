@@ -14,6 +14,9 @@
 #
 # Requires Python 2.4+ and Openssl 1.0+
 #
+
+import glob
+
 from azurelinuxagent.common import event
 from azurelinuxagent.common.protocol.wire import *
 from tests.protocol.mockwiredata import *
@@ -25,10 +28,10 @@ wireserver_url = '168.63.129.16'
 
 @patch("time.sleep")
 @patch("azurelinuxagent.common.protocol.wire.CryptUtil")
-class TestWireProtocolGetters(AgentTestCase):
+class TestWireProtocol(AgentTestCase):
 
     def setUp(self):
-        super(TestWireProtocolGetters, self).setUp()
+        super(TestWireProtocol, self).setUp()
         HostPluginProtocol.set_default_channel(False)
     
     def _test_getters(self, test_data, MockCryptUtil, _):
@@ -40,8 +43,9 @@ class TestWireProtocolGetters(AgentTestCase):
             protocol.get_vminfo()
             protocol.get_certs()
             ext_handlers, etag = protocol.get_ext_handlers()
+            self.assertEqual("1", etag)
             for ext_handler in ext_handlers.extHandlers:
-                protocol.get_ext_handler_pkgs(ext_handler)
+                protocol.get_ext_handler_pkgs(ext_handler, etag)
 
             crt1 = os.path.join(self.tmp_dir,
                                 '33B0ABCE4673538650971C10F7D7397E71561F35.crt')
@@ -53,6 +57,8 @@ class TestWireProtocolGetters(AgentTestCase):
             self.assertTrue(os.path.isfile(crt1))
             self.assertTrue(os.path.isfile(crt2))
             self.assertTrue(os.path.isfile(prv2))
+
+            self.assertEqual("1", protocol.get_incarnation())
 
     def test_getters(self, *args):
         """Normal case"""
@@ -87,6 +93,7 @@ class TestWireProtocolGetters(AgentTestCase):
         #    fetched often; however, the dependent documents, such as the
         #    HostingEnvironmentConfig, will be retrieved the expected number
         self.assertEqual(2, test_data.call_counts["hostingenvuri"])
+
 
     def test_call_storage_kwargs(self,
                                  mock_cryptutil,
@@ -365,10 +372,13 @@ class TestWireProtocolGetters(AgentTestCase):
         v1_ga_status = {
             'version': str(CURRENT_VERSION),
             'status': status,
-            'osversion': DISTRO_VERSION,
-            'osname': DISTRO_NAME,
-            'hostname': socket.gethostname(),
             'formattedMessage': formatted_msg
+        }
+        v1_ga_guest_info = {
+            'computerName': socket.gethostname(),
+            'osName': DISTRO_NAME,
+            'osVersion': DISTRO_VERSION,
+            'version': str(CURRENT_VERSION),
         }
         v1_agg_status = {
             'guestAgentStatus': v1_ga_status,
@@ -377,7 +387,8 @@ class TestWireProtocolGetters(AgentTestCase):
         v1_vm_status = {
             'version': '1.1',
             'timestampUTC': timestamp,
-            'aggregateStatus': v1_agg_status
+            'aggregateStatus': v1_agg_status,
+            'guestOSInfo' : v1_ga_guest_info
         }
         self.assertEqual(json.dumps(v1_vm_status), actual.to_json())
 
@@ -389,6 +400,7 @@ class MockResponse:
 
     def read(self):
         return self.body
+
 
 if __name__ == '__main__':
     unittest.main()

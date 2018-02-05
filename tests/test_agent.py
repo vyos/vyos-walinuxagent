@@ -15,9 +15,7 @@
 # Requires Python 2.4+ and Openssl 1.0+
 #
 
-import mock
 import os.path
-import sys
 
 from azurelinuxagent.agent import *
 from azurelinuxagent.common.conf import *
@@ -39,12 +37,13 @@ Logs.Verbose = False
 OS.AllowHTTP = False
 OS.CheckRdmaDriver = False
 OS.EnableFIPS = True
-OS.EnableFirewall = True
+OS.EnableFirewall = False
 OS.EnableRDMA = False
 OS.HomeDir = /home
 OS.OpensslPath = /usr/bin/openssl
 OS.PasswordPath = /etc/shadow
 OS.RootDeviceScsiTimeout = 300
+OS.SshClientAliveInterval = 42
 OS.SshDir = /notareal/path
 OS.SudoersDir = /etc/sudoers.d
 OS.UpdateRdmaDriver = False
@@ -65,8 +64,7 @@ ResourceDisk.Filesystem = ext4
 ResourceDisk.Format = True
 ResourceDisk.MountOptions = None
 ResourceDisk.MountPoint = /mnt/resource
-ResourceDisk.SwapSizeMB = 0
-""".split('\n')
+ResourceDisk.SwapSizeMB = 0""".split('\n')
 
 class TestAgent(AgentTestCase):
 
@@ -160,10 +158,30 @@ class TestAgent(AgentTestCase):
         self.assertFalse(os.path.isdir(ext_log_dir))
         mock_log.assert_called_once()
 
-    def test_agent_show_configuration(self):
-        if not hasattr(sys.stdout, 'getvalue'):
-            self.fail('Test requires at least Python 2.7 with buffered output')
-        agent = Agent(False,
-                    conf_file_path=os.path.join(data_dir, "test_waagent.conf"))
-        agent.show_configuration()
-        self.assertEqual(EXPECTED_CONFIGURATION, sys.stdout.getvalue().split('\n'))
+    def test_agent_get_configuration(self):
+        Agent(False, conf_file_path=os.path.join(data_dir, "test_waagent.conf"))
+
+        actual_configuration = []
+        configuration = conf.get_configuration()
+        for k in sorted(configuration.keys()):
+            actual_configuration.append("{0} = {1}".format(k, configuration[k]))
+        self.assertEqual(EXPECTED_CONFIGURATION, actual_configuration)
+
+    def test_agent_usage_message(self):
+        message = usage()
+
+        # Python 2.6 does not have assertIn()
+        self.assertTrue("-verbose" in message)
+        self.assertTrue("-force" in message)
+        self.assertTrue("-help" in message)
+        self.assertTrue("-configuration-path" in message)
+        self.assertTrue("-deprovision" in message)
+        self.assertTrue("-register-service" in message)
+        self.assertTrue("-version" in message)
+        self.assertTrue("-daemon" in message)
+        self.assertTrue("-start" in message)
+        self.assertTrue("-run-exthandlers" in message)
+        self.assertTrue("-show-configuration" in message)
+
+        # sanity check
+        self.assertFalse("-not-a-valid-option" in message)

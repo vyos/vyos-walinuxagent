@@ -173,6 +173,11 @@ class MetadataProtocol(Protocol):
             return None
         return self.certs
 
+    def get_incarnation(self):
+        # Always return 0 since Azure Stack does not maintain goal state
+        # incarnation identifiers
+        return 0
+
     def get_vmagent_manifests(self):
         self.update_goal_state()
 
@@ -235,7 +240,7 @@ class MetadataProtocol(Protocol):
             set_properties("extensionHandlers", ext_list.extHandlers, data)
         return ext_list, etag
 
-    def get_ext_handler_pkgs(self, ext_handler):
+    def get_ext_handler_pkgs(self, ext_handler, etag):
         logger.verbose("Get extension handler packages")
         pkg_list = ExtHandlerPackageList()
 
