@@ -23,7 +23,8 @@ import azurelinuxagent.common.event as event
 import azurelinuxagent.common.logger as logger
 
 from azurelinuxagent.common.event import add_event, \
-                                    mark_event_status, should_emit_event
+                                    mark_event_status, should_emit_event, \
+                                    WALAEventOperation
 from azurelinuxagent.common.future import ustr
 from azurelinuxagent.common.version import CURRENT_VERSION
 
@@ -48,8 +49,7 @@ class TestEvent(AgentTestCase):
         self.assertTrue(es.event_succeeded("Foo", "1.2", "FauxOperation"))
 
     def test_event_status_records_status(self):
-        d = tempfile.mkdtemp()
-        es = event.EventStatus(tempfile.mkdtemp())
+        es = event.EventStatus()
 
         es.mark_event_status("Foo", "1.2", "FauxOperation", True)
         self.assertTrue(es.event_succeeded("Foo", "1.2", "FauxOperation"))
@@ -69,7 +69,7 @@ class TestEvent(AgentTestCase):
         self.assertFalse(es.event_succeeded("Foo", "1.2", "FauxOperation"))
 
     def test_should_emit_event_ignores_unknown_operations(self):
-        event.__event_status__ = event.EventStatus(tempfile.mkdtemp())
+        event.__event_status__ = event.EventStatus()
 
         self.assertTrue(event.should_emit_event("Foo", "1.2", "FauxOperation", True))
         self.assertTrue(event.should_emit_event("Foo", "1.2", "FauxOperation", False))
@@ -82,7 +82,7 @@ class TestEvent(AgentTestCase):
 
 
     def test_should_emit_event_handles_known_operations(self):
-        event.__event_status__ = event.EventStatus(tempfile.mkdtemp())
+        event.__event_status__ = event.EventStatus()
 
         # Known operations always initially "fire"
         for op in event.__event_status_operations__:
@@ -144,7 +144,7 @@ class TestEvent(AgentTestCase):
         event.add_periodic(logger.EVERY_DAY, "FauxEvent")
         self.assertEqual(1, mock_event.call_count)
 
-        h = hash("FauxEvent"+""+ustr(True)+"")
+        h = hash("FauxEvent"+WALAEventOperation.Unknown+ustr(True))
         event.__event_logger__.periodic_events[h] = \
             datetime.now() - logger.EVERY_DAY - logger.EVERY_HOUR
         event.add_periodic(logger.EVERY_DAY, "FauxEvent")
@@ -158,7 +158,8 @@ class TestEvent(AgentTestCase):
         mock_event.assert_called_once_with(
             "FauxEvent",
             duration=0, evt_type='', is_internal=False, is_success=True,
-            log_event=True, message='', op='', version=str(CURRENT_VERSION))
+            log_event=True, message='', op=WALAEventOperation.Unknown,
+            version=str(CURRENT_VERSION))
 
     def test_save_event(self):
         add_event('test', message='test event')

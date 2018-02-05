@@ -27,7 +27,6 @@ import os
 import pwd
 import re
 import shutil
-import string
 
 import azurelinuxagent.common.logger as logger
 import azurelinuxagent.common.utils.textutil as textutil
@@ -42,8 +41,9 @@ KNOWN_IOERRORS = [
     errno.ENOSPC,       # Out of space
     errno.ENAMETOOLONG, # Name too long
     errno.ELOOP,        # Too many symbolic links encountered
-    errno.EREMOTEIO     # Remote I/O error
+    121                 # Remote I/O error (errno.EREMOTEIO -- not present in all Python 2.7+)
 ]
+
 
 def copy_file(from_path, to_path=None, to_dir=None):
     if to_path is None:
@@ -66,10 +66,11 @@ def read_file(filepath, asbin=False, remove_bom=False, encoding='utf-8'):
             return data
 
         if remove_bom:
-            #Remove bom on bytes data before it is converted into string.
+            # remove bom on bytes data before it is converted into string.
             data = textutil.remove_bom(data)
         data = ustr(data, encoding=encoding)
         return data
+
 
 def write_file(filepath, contents, asbin=False, encoding='utf-8', append=False):
     """
@@ -82,6 +83,7 @@ def write_file(filepath, contents, asbin=False, encoding='utf-8', append=False):
     with open(filepath, mode) as out_file:
         out_file.write(data)
 
+
 def append_file(filepath, contents, asbin=False, encoding='utf-8'):
     """
     Append 'contents' to 'filepath'.
@@ -93,6 +95,7 @@ def base_name(path):
     head, tail = os.path.split(path)
     return tail
 
+
 def get_line_startingwith(prefix, filepath):
     """
     Return line from 'filepath' if the line startswith 'prefix'
@@ -102,7 +105,6 @@ def get_line_startingwith(prefix, filepath):
             return line
     return None
 
-#End File operation util functions
 
 def mkdir(dirpath, mode=None, owner=None):
     if not os.path.isdir(dirpath):
@@ -112,6 +114,7 @@ def mkdir(dirpath, mode=None, owner=None):
     if owner is not None:
         chowner(dirpath, owner)
 
+
 def chowner(path, owner):
     if not os.path.exists(path):
         logger.error("Path does not exist: {0}".format(path))
@@ -119,18 +122,21 @@ def chowner(path, owner):
         owner_info = pwd.getpwnam(owner)
         os.chown(path, owner_info[2], owner_info[3])
 
+
 def chmod(path, mode):
     if not os.path.exists(path):
         logger.error("Path does not exist: {0}".format(path))
     else:
         os.chmod(path, mode)
 
+
 def rm_files(*args):
     for paths in args:
-        #Find all possible file paths
+        # find all possible file paths
         for path in glob.glob(paths):
             if os.path.isfile(path):
                 os.remove(path)
+
 
 def rm_dirs(*args):
     """
@@ -149,19 +155,23 @@ def rm_dirs(*args):
             elif os.path.isdir(path):
                 shutil.rmtree(path)
 
+
 def trim_ext(path, ext):
     if not ext.startswith("."):
         ext = "." + ext
     return path.split(ext)[0] if path.endswith(ext) else path
+
 
 def update_conf_file(path, line_start, val, chk_err=False):
     conf = []
     if not os.path.isfile(path) and chk_err:
         raise IOError("Can't find config file:{0}".format(path))
     conf = read_file(path).split('\n')
-    conf = [x for x in conf if x is not None and len(x) > 0 and not x.startswith(line_start)]
+    conf = [x for x in conf
+            if x is not None and len(x) > 0 and not x.startswith(line_start)]
     conf.append(val)
     write_file(path, '\n'.join(conf) + '\n')
+
 
 def search_file(target_dir_name, target_file_name):
     for root, dirs, files in os.walk(target_dir_name):
@@ -170,23 +180,27 @@ def search_file(target_dir_name, target_file_name):
                 return os.path.join(root, file_name)
     return None
 
+
 def chmod_tree(path, mode):
     for root, dirs, files in os.walk(path):
         for file_name in files:
             os.chmod(os.path.join(root, file_name), mode)
 
+
 def findstr_in_file(file_path, line_str):
     """
     Return True if the line is in the file; False otherwise.
-    (Trailing whitespace is ignore.)
+    (Trailing whitespace is ignored.)
     """
     try:
         for line in (open(file_path, 'r')).readlines():
             if line_str == line.rstrip():
                 return True
-    except Exception as e:
+    except Exception:
+        # swallow exception
         pass
     return False
+
 
 def findre_in_file(file_path, line_re):
     """
@@ -203,6 +217,7 @@ def findre_in_file(file_path, line_re):
 
     return None
 
+
 def get_all_files(root_path):
     """
     Find all files under the given root path
@@ -212,6 +227,7 @@ def get_all_files(root_path):
         result.extend([os.path.join(root, file) for file in files])
 
     return result
+
 
 def clean_ioerror(e, paths=[]):
     """
@@ -228,5 +244,6 @@ def clean_ioerror(e, paths=[]):
                     shutil.rmtree(path, ignore_errors=True)
                 else:
                     os.remove(path)
-            except Exception as e:
+            except Exception:
+                # swallow exception
                 pass

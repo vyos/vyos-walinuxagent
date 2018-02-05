@@ -26,9 +26,9 @@ from datetime import datetime
 import azurelinuxagent.common.conf as conf
 import azurelinuxagent.common.logger as logger
 import azurelinuxagent.common.utils.fileutil as fileutil
-import azurelinuxagent.common.utils.shellutil as shellutil
 
-from azurelinuxagent.common.event import elapsed_milliseconds
+from azurelinuxagent.common.event import elapsed_milliseconds, \
+    WALAEventOperation
 from azurelinuxagent.common.exception import ProvisionError, ProtocolError
 from azurelinuxagent.common.future import ustr
 from azurelinuxagent.common.protocol import OVF_FILE_NAME
@@ -64,9 +64,12 @@ class CloudInitProvisionHandler(ProvisionHandler):
             logger.info("Finished provisioning")
 
             self.report_ready(thumbprint)
-            self.report_event("Provision succeed",
+            self.report_event("Provisioning with cloud-init succeeded",
                 is_success=True,
                 duration=elapsed_milliseconds(utc_start))
+            self.report_event(self.create_guest_state_telemetry_messsage(),
+                  is_success=True,
+                  operation=WALAEventOperation.GuestState)
 
         except ProvisionError as e:
             logger.error("Provisioning failed: {0}", ustr(e))
@@ -103,7 +106,7 @@ class CloudInitProvisionHandler(ProvisionHandler):
                              "after {1}s".format(ovf_file_path,
                                                  max_retry * sleep_time))
 
-    def wait_for_ssh_host_key(self, max_retry=360, sleep_time=5):
+    def wait_for_ssh_host_key(self, max_retry=1800, sleep_time=1):
         """
         Wait for cloud-init to generate ssh host key
         """

@@ -162,6 +162,7 @@ class ExtHandlerProperties(DataContract):
     def __init__(self):
         self.version = None
         self.upgradePolicy = None
+        self.upgradeGuid = None
         self.state = None
         self.extensions = DataContractList(Extension)
 
@@ -245,11 +246,13 @@ class ExtHandlerStatus(DataContract):
     def __init__(self,
                  name=None,
                  version=None,
+                 upgradeGuid=None,
                  status=None,
                  code=0,
                  message=None):
         self.name = name
         self.version = version
+        self.upgradeGuid = upgradeGuid
         self.status = status
         self.code = code
         self.message = message
@@ -300,6 +303,9 @@ class Protocol(DataContract):
     def get_certs(self):
         raise NotImplementedError()
 
+    def get_incarnation(self):
+        raise NotImplementedError()
+
     def get_vmagent_manifests(self):
         raise NotImplementedError()
 
@@ -309,15 +315,15 @@ class Protocol(DataContract):
     def get_ext_handlers(self):
         raise NotImplementedError()
 
-    def get_ext_handler_pkgs(self, extension):
+    def get_ext_handler_pkgs(self, extension, etag):
         raise NotImplementedError()
 
     def get_artifacts_profile(self):
         raise NotImplementedError()
 
-    def download_ext_handler_pkg(self, uri, headers=None):
+    def download_ext_handler_pkg(self, uri, headers=None, use_proxy=True):
         try:
-            resp = restutil.http_get(uri, use_proxy=True, headers=headers)
+            resp = restutil.http_get(uri, headers=headers, use_proxy=use_proxy)
             if restutil.request_succeeded(resp):
                 return resp.read()
         except Exception as e:

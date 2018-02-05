@@ -21,8 +21,10 @@ import os
 import platform
 import time
 import threading
+import uuid
 
 import azurelinuxagent.common.conf as conf
+import azurelinuxagent.common.utils.fileutil as fileutil
 import azurelinuxagent.common.logger as logger
 
 from azurelinuxagent.common.event import add_event, WALAEventOperation
@@ -34,6 +36,7 @@ from azurelinuxagent.common.protocol.restapi import TelemetryEventParam, \
                                                     TelemetryEventList, \
                                                     TelemetryEvent, \
                                                     set_properties
+from azurelinuxagent.common.utils.restutil import IOErrorCounter
 from azurelinuxagent.common.utils.textutil import parse_doc, findall, find, getattrib
 from azurelinuxagent.common.version import DISTRO_NAME, DISTRO_VERSION, \
             DISTRO_CODE_NAME, AGENT_LONG_VERSION, \
@@ -179,15 +182,53 @@ class MonitorHandler(object):
 
     def daemon(self):
         period = datetime.timedelta(minutes=30)
+        protocol = self.protocol_util.get_protocol()        
         last_heartbeat = datetime.datetime.utcnow() - period
+
+        # Create a new identifier on each restart and reset the counter
+        heartbeat_id = str(uuid.uuid4()).upper()
+        counter = 0
         while True:
             if datetime.datetime.utcnow() >= (last_heartbeat + period):
                 last_heartbeat = datetime.datetime.utcnow()
+                incarnation = protocol.get_incarnation()
+                dropped_packets = self.osutil.get_firewall_dropped_packets(
+                                                    protocol.endpoint)
+
+                msg = "{0};{1};{2};{3}".format(
+                    incarnation, counter, heartbeat_id, dropped_packets)
+
                 add_event(
                     name=AGENT_NAME,
                     version=CURRENT_VERSION,
                     op=WALAEventOperation.HeartBeat,
-                    is_success=True)
+                    is_success=True,
+                    message=msg,
+                    log_event=False)
+
+                counter += 1
+
+                io_errors = IOErrorCounter.get_and_reset()
+                hostplugin_errors = io_errors.get("hostplugin")
+                protocol_errors = io_errors.get("protocol")
+                other_errors = io_errors.get("other")
+
+                if hostplugin_errors > 0 \
+                        or protocol_errors > 0 \
+                        or other_errors > 0:
+
+                    msg = "hostplugin:{0};protocol:{1};other:{2}"\
+                        .format(hostplugin_errors,
+                                protocol_errors,
+                                other_errors)
+                    add_event(
+                        name=AGENT_NAME,
+                        version=CURRENT_VERSION,
+                        op=WALAEventOperation.HttpErrors,
+                        is_success=True,
+                        message=msg,
+                        log_event=False)
+
             try:
                 self.collect_and_send_events()
             except Exception as e:

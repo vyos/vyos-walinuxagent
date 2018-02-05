@@ -57,9 +57,20 @@ IPTABLES_VERSION = "iptables --version"
 IPTABLES_LOCKING_VERSION = FlexibleVersion('1.4.21')
 
 FIREWALL_ACCEPT = "iptables {0} -t security -{1} OUTPUT -d {2} -p tcp -m owner --uid-owner {3} -j ACCEPT"
-FIREWALL_DROP = "iptables {0} -t security -{1} OUTPUT -d {2} -p tcp -j DROP"
-FIREWALL_LIST = "iptables {0} -t security -L"
+# Note:
+# -- Initially "flight" the change to ACCEPT packets and develop a metric baseline
+#    A subsequent release will convert the ACCEPT to DROP
+FIREWALL_DROP = "iptables {0} -t security -{1} OUTPUT -d {2} -p tcp -m conntrack --ctstate INVALID,NEW -j ACCEPT"
+# FIREWALL_DROP = "iptables {0} -t security -{1} OUTPUT -d {2} -p tcp -m conntrack --ctstate INVALID,NEW -j DROP"
+FIREWALL_LIST = "iptables {0} -t security -L -nxv"
+FIREWALL_PACKETS = "iptables {0} -t security -L OUTPUT --zero OUTPUT -nxv"
 FIREWALL_FLUSH = "iptables {0} -t security --flush"
+
+# Precisely delete the rules created by the agent.
+FIREWALL_DELETE_CONNTRACK = "iptables {0} -t security -D OUTPUT -d {1} -p tcp -m conntrack --ctstate INVALID,NEW -j ACCEPT"
+FIREWALL_DELETE_OWNER = "iptables {0} -t security -D OUTPUT -d {1} -p tcp -m owner --uid-owner {2} -j ACCEPT"
+
+PACKET_PATTERN = "^\s*(\d+)\s+(\d+)\s+DROP\s+.*{0}[^\d]*$"
 
 _enable_firewall = True
 
@@ -69,12 +80,44 @@ UUID_PATTERN = re.compile(
     r'^\s*[A-F0-9]{8}(?:\-[A-F0-9]{4}){3}\-[A-F0-9]{12}\s*$',
     re.IGNORECASE)
 
-class DefaultOSUtil(object):
 
+class DefaultOSUtil(object):
     def __init__(self):
         self.agent_conf_file_path = '/etc/waagent.conf'
         self.selinux = None
         self.disable_route_warning = False
+
+    def get_firewall_dropped_packets(self, dst_ip=None):
+        # If a previous attempt failed, do not retry
+        global _enable_firewall
+        if not _enable_firewall:
+            return 0
+
+        try:
+            wait = self.get_firewall_will_wait()
+
+            rc, output = shellutil.run_get_output(FIREWALL_PACKETS.format(wait))
+            if rc == 3:
+                # Transient error  that we ignore.  This code fires every loop
+                # of the daemon (60m), so we will get the value eventually.
+                return 0
+
+            if rc != 0:
+                return -1
+
+            pattern = re.compile(PACKET_PATTERN.format(dst_ip))
+            for line in output.split('\n'):
+                m = pattern.match(line)
+                if m is not None:
+                    return int(m.group(1))
+            
+            return 0
+
+        except Exception as e:
+            _enable_firewall = False
+            logger.warn("Unable to retrieve firewall packets dropped"
+                        "{0}".format(ustr(e)))
+            return -1
 
     def get_firewall_will_wait(self):
         # Determine if iptables will serialize access
@@ -95,31 +138,46 @@ class DefaultOSUtil(object):
                 else ""
         return wait
 
-    def remove_firewall(self):
-        # If a previous attempt threw an exception, do not retry
+    def _delete_rule(self, rule):
+        """
+        Continually execute the delete operation until the return
+        code is non-zero or the limit has been reached.
+        """
+        for i in range(1, 100):
+            rc = shellutil.run(rule, chk_err=False)
+            if rc == 1:
+                return
+            elif rc == 2:
+                raise Exception("invalid firewall deletion rule '{0}'".format(rule))
+
+    def remove_firewall(self, dst_ip=None, uid=None):
+        # If a previous attempt failed, do not retry
         global _enable_firewall
         if not _enable_firewall:
             return False
 
         try:
+            if dst_ip is None or uid is None:
+                msg = "Missing arguments to enable_firewall"
+                logger.warn(msg)
+                raise Exception(msg)
+
             wait = self.get_firewall_will_wait()
 
-            flush_rule = FIREWALL_FLUSH.format(wait)
-            if shellutil.run(flush_rule, chk_err=False) != 0:
-                logger.warn("Failed to flush firewall")
+            self._delete_rule(FIREWALL_DELETE_CONNTRACK.format(wait, dst_ip))
+            self._delete_rule(FIREWALL_DELETE_OWNER.format(wait, dst_ip, uid))
 
             return True
 
         except Exception as e:
             _enable_firewall = False
-            logger.info("Unable to flush firewall -- "
+            logger.info("Unable to remove firewall -- "
                         "no further attempts will be made: "
                         "{0}".format(ustr(e)))
             return False
 
     def enable_firewall(self, dst_ip=None, uid=None):
-
-        # If a previous attempt threw an exception, do not retry
+        # If a previous attempt failed, do not retry
         global _enable_firewall
         if not _enable_firewall:
             return False
@@ -134,10 +192,15 @@ class DefaultOSUtil(object):
 
             # If the DROP rule exists, make no changes
             drop_rule = FIREWALL_DROP.format(wait, "C", dst_ip)
-
-            if shellutil.run(drop_rule, chk_err=False) == 0:
+            rc = shellutil.run(drop_rule, chk_err=False)
+            if rc == 0:
                 logger.verbose("Firewall appears established")
                 return True
+            elif rc == 2:
+                self.remove_firewall(dst_ip, uid)
+                msg = "please upgrade iptables to a version that supports the -C option"
+                logger.warn(msg)
+                raise Exception(msg)
 
             # Otherwise, append both rules
             accept_rule = FIREWALL_ACCEPT.format(wait, "A", dst_ip, uid)
@@ -309,11 +372,11 @@ class DefaultOSUtil(object):
             else:
                 sudoer = "{0} ALL=(ALL) ALL".format(username)
             if not os.path.isfile(sudoers_wagent) or \
-                fileutil.findstr_in_file(sudoers_wagent, sudoer) is None:
+                    fileutil.findstr_in_file(sudoers_wagent, sudoer) is False:
                 fileutil.append_file(sudoers_wagent, "{0}\n".format(sudoer))
             fileutil.chmod(sudoers_wagent, 0o440)
         else:
-            #Remove user from sudoers
+            # remove user from sudoers
             if os.path.isfile(sudoers_wagent):
                 try:
                     content = fileutil.read_file(sudoers_wagent)
@@ -440,7 +503,7 @@ class DefaultOSUtil(object):
         conf_file = fileutil.read_file(conf_file_path).split("\n")
         textutil.set_ssh_config(conf_file, "PasswordAuthentication", option)
         textutil.set_ssh_config(conf_file, "ChallengeResponseAuthentication", option)
-        textutil.set_ssh_config(conf_file, "ClientAliveInterval", "180")
+        textutil.set_ssh_config(conf_file, "ClientAliveInterval", str(conf.get_ssh_client_alive_interval()))
         fileutil.write_file(conf_file_path, "\n".join(conf_file))
         logger.info("{0} SSH password-based authentication methods."
                     .format("Disabled" if disable_password else "Enabled"))
@@ -965,7 +1028,7 @@ class DefaultOSUtil(object):
         if not os.path.exists(hostname_record):
             # this file is created at provisioning time with agents >= 2.2.3
             hostname = socket.gethostname()
-            logger.warn('Hostname record does not exist, '
+            logger.info('Hostname record does not exist, '
                         'creating [{0}] with hostname [{1}]',
                         hostname_record,
                         hostname)
