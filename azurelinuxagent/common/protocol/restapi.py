@@ -315,15 +315,15 @@ class Protocol(DataContract):
     def get_ext_handlers(self):
         raise NotImplementedError()
 
-    def get_ext_handler_pkgs(self, extension, etag):
+    def get_ext_handler_pkgs(self, extension):
         raise NotImplementedError()
 
     def get_artifacts_profile(self):
         raise NotImplementedError()
 
-    def download_ext_handler_pkg(self, uri, headers=None, use_proxy=True):
+    def download_ext_handler_pkg(self, uri, headers=None):
         try:
-            resp = restutil.http_get(uri, headers=headers, use_proxy=use_proxy)
+            resp = restutil.http_get(uri, use_proxy=True, headers=headers)
             if restutil.request_succeeded(resp):
                 return resp.read()
         except Exception as e:

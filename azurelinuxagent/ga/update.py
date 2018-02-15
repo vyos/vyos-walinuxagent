@@ -21,7 +21,6 @@ import glob
 import json
 import os
 import platform
-import random
 import re
 import shutil
 import signal
@@ -45,7 +44,6 @@ from azurelinuxagent.common.event import add_event, add_periodic, \
                                     WALAEventOperation
 from azurelinuxagent.common.exception import ProtocolError, \
                                             ResourceGoneError, \
-                                            RestartError, \
                                             UpdateError
 from azurelinuxagent.common.future import ustr
 from azurelinuxagent.common.osutil import get_osutil
@@ -662,7 +660,7 @@ class UpdateHandler(object):
                     continue
 
                 msg = u"Exception retrieving agent manifests: {0}".format(
-                            ustr(traceback.format_exc()))
+                            ustr(e))
                 logger.warn(msg)
                 add_event(
                     AGENT_NAME,
@@ -727,13 +725,6 @@ class GuestAgent(object):
             self._ensure_loaded()
         except Exception as e:
             if isinstance(e, ResourceGoneError):
-                raise
-
-            # The agent was improperly blacklisting versions due to a timeout
-            # encountered while downloading a later version. Errors of type
-            # socket.error are IOError, so this should provide sufficient
-            # protection against a large class of I/O operation failures.
-            if isinstance(e, IOError):
                 raise
 
             # Note the failure, blacklist the agent if the package downloaded
@@ -826,9 +817,7 @@ class GuestAgent(object):
         self._load_error()
 
     def _download(self):
-        uris_shuffled = self.pkg.uris
-        random.shuffle(uris_shuffled)
-        for uri in uris_shuffled:
+        for uri in self.pkg.uris:
             if not HostPluginProtocol.is_default_channel() and self._fetch(uri.uri):
                 break
 

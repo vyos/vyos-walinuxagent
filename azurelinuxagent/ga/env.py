@@ -107,7 +107,7 @@ class EnvHandler(object):
                     version=CURRENT_VERSION,
                     op=WALAEventOperation.Firewall,
                     is_success=success,
-                    log_event=False)
+                    log_event=True)
 
             timeout = conf.get_root_device_scsi_timeout()
             if timeout is not None:

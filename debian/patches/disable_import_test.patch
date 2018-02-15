@@ -1,7 +1,7 @@
-Index: walinuxagent-2.2.21/config/waagent.conf
+Index: walinuxagent-2.2.21+really2.2.20/config/waagent.conf
 ===================================================================
---- walinuxagent-2.2.21.orig/config/waagent.conf
-+++ walinuxagent-2.2.21/config/waagent.conf
+--- walinuxagent-2.2.21+really2.2.20.orig/config/waagent.conf
++++ walinuxagent-2.2.21+really2.2.20/config/waagent.conf
 @@ -3,16 +3,16 @@
  #
  
@@ -21,8 +21,8 @@ Index: walinuxagent-2.2.21/config/waagent.conf
 +Provisioning.RegenerateSshHostKeyPair=n
  
  # Supported values are "rsa", "dsa", "ecdsa", "ed25519", and "auto".
- # The "auto" option is supported on OpenSSH 5.9 (2011) and later.
-@@ -37,14 +37,14 @@ Provisioning.ExecuteCustomData=n
+ Provisioning.SshHostKeyPairType=rsa
+@@ -36,14 +36,14 @@ Provisioning.ExecuteCustomData=n
  Provisioning.AllowResetSysUser=n
  
  # Format if unformatted. If 'n', resource disk will not be mounted.
