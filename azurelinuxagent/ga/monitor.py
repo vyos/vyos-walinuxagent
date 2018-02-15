@@ -203,31 +203,26 @@ class MonitorHandler(object):
                     version=CURRENT_VERSION,
                     op=WALAEventOperation.HeartBeat,
                     is_success=True,
-                    message=msg,
-                    log_event=False)
+                    message=msg)
 
                 counter += 1
 
-                io_errors = IOErrorCounter.get_and_reset()
-                hostplugin_errors = io_errors.get("hostplugin")
-                protocol_errors = io_errors.get("protocol")
-                other_errors = io_errors.get("other")
+                ioerrors = IOErrorCounter.get_and_reset()
+                hostplugin_errors = ioerrors.get("hostplugin")
+                protocol_errors = ioerrors.get("protocol")
+                other_errors = ioerrors.get("other")
 
-                if hostplugin_errors > 0 \
-                        or protocol_errors > 0 \
-                        or other_errors > 0:
-
-                    msg = "hostplugin:{0};protocol:{1};other:{2}"\
-                        .format(hostplugin_errors,
-                                protocol_errors,
-                                other_errors)
+                if hostplugin_errors > 0 or \
+                    protocol_errors > 0 or \
+                    other_errors > 0:
+                    msg = "hostplugin:{0};protocol:{1};other:{2}".format(
+                        hostplugin_errors, protocol_errors, other_errors)
                     add_event(
                         name=AGENT_NAME,
                         version=CURRENT_VERSION,
                         op=WALAEventOperation.HttpErrors,
-                        is_success=True,
-                        message=msg,
-                        log_event=False)
+                        is_success=False,
+                        msg=msg)
 
             try:
                 self.collect_and_send_events()

@@ -17,12 +17,17 @@
 
 from __future__ import print_function
 
+from datetime import datetime
+
+import json
+import shutil
+import stat
+
 from azurelinuxagent.common.event import *
 from azurelinuxagent.common.protocol.hostplugin import *
 from azurelinuxagent.common.protocol.metadata import *
 from azurelinuxagent.common.protocol.wire import *
 from azurelinuxagent.common.utils.fileutil import *
-from azurelinuxagent.common.version import AGENT_PKG_GLOB, AGENT_DIR_GLOB
 from azurelinuxagent.ga.update import *
 
 from tests.tools import *
@@ -381,30 +386,6 @@ class TestGuestAgent(UpdateTestCase):
         agent.mark_failure(is_fatal=True)
         self.assertTrue(agent.is_blacklisted)
         self.assertEqual(agent.is_blacklisted, agent.error.is_blacklisted)
-
-    @patch("azurelinuxagent.ga.update.GuestAgent._ensure_downloaded")
-    @patch("azurelinuxagent.ga.update.GuestAgent._ensure_loaded")
-    def test_resource_gone_error_not_blacklisted(self, mock_loaded, mock_downloaded):
-        try:
-            mock_downloaded.side_effect = ResourceGoneError()
-            agent = GuestAgent(path=self.agent_path)
-            self.assertFalse(agent.is_blacklisted)
-        except ResourceGoneError:
-            pass
-        except:
-            self.fail("Exception was not expected!")
-
-    @patch("azurelinuxagent.ga.update.GuestAgent._ensure_downloaded")
-    @patch("azurelinuxagent.ga.update.GuestAgent._ensure_loaded")
-    def test_ioerror_not_blacklisted(self, mock_loaded, mock_downloaded):
-        try:
-            mock_downloaded.side_effect = IOError()
-            agent = GuestAgent(path=self.agent_path)
-            self.assertFalse(agent.is_blacklisted)
-        except IOError:
-            pass
-        except:
-            self.fail("Exception was not expected!")
 
     @patch("azurelinuxagent.ga.update.GuestAgent._ensure_downloaded")
     @patch("azurelinuxagent.ga.update.GuestAgent._ensure_loaded")
@@ -1018,8 +999,8 @@ class TestUpdate(UpdateTestCase):
         self.assertTrue(2 < len(self.update_handler.agents))
 
         # Purge every other agent
-        purged_agents = self.update_handler.agents[1::2]
-        kept_agents = self.update_handler.agents[::2]
+        kept_agents = self.update_handler.agents[1::2]
+        purged_agents = self.update_handler.agents[::2]
 
         # Reload and assert only the kept agents remain on disk
         self.update_handler.agents = kept_agents
@@ -1569,7 +1550,6 @@ class ProtocolMock(object):
         self.call_counts["update_goal_state"] += 1
         self.goal_state_forced = self.goal_state_forced or forced
 
-
 class ResponseMock(Mock):
     def __init__(self, status=restutil.httpclient.OK, response=None, reason=None):
         Mock.__init__(self)
@@ -1598,7 +1578,6 @@ class TimeMock(Mock):
         current_time = self.next_time
         self.next_time += self.time_increment
         return current_time
-
 
 if __name__ == '__main__':
     unittest.main()

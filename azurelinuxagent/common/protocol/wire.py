@@ -18,7 +18,6 @@
 
 import json
 import os
-import random
 import re
 import time
 import xml.sax.saxutils as saxutils
@@ -28,7 +27,7 @@ import azurelinuxagent.common.utils.fileutil as fileutil
 import azurelinuxagent.common.utils.textutil as textutil
 
 from azurelinuxagent.common.exception import ProtocolNotFoundError, \
-                                            ResourceGoneError, RestartError
+                                            ResourceGoneError
 from azurelinuxagent.common.future import httpclient, bytebuffer
 from azurelinuxagent.common.protocol.hostplugin import HostPluginProtocol
 from azurelinuxagent.common.protocol.restapi import *
@@ -145,9 +144,10 @@ class WireProtocol(Protocol):
         # In wire protocol, incarnation is equivalent to ETag
         return ext_conf.ext_handlers, goal_state.incarnation
 
-    def get_ext_handler_pkgs(self, ext_handler, etag):
+    def get_ext_handler_pkgs(self, ext_handler):
         logger.verbose("Get extension handler package")
-        man = self.client.get_ext_manifest(ext_handler, etag)
+        goal_state = self.client.get_goal_state()
+        man = self.client.get_ext_manifest(ext_handler, goal_state)
         return man.pkg_list
 
     def get_artifacts_profile(self):
@@ -160,10 +160,10 @@ class WireProtocol(Protocol):
         if package is not None:
             return package
         else:
-            logger.verbose("Download did not succeed, falling back to host plugin")
+            logger.warn("Download did not succeed, falling back to host plugin")
             host = self.client.get_host_plugin()
             uri, headers = host.get_artifact_request(uri, host.manifest_uri)
-            package = super(WireProtocol, self).download_ext_handler_pkg(uri, headers=headers, use_proxy=False)
+            package = super(WireProtocol, self).download_ext_handler_pkg(uri, headers=headers)
         return package
 
     def report_provision_status(self, provision_status):
@@ -591,10 +591,7 @@ class WireClient(object):
 
     def fetch_manifest(self, version_uris):
         logger.verbose("Fetch manifest")
-        version_uris_shuffled = version_uris
-        random.shuffle(version_uris_shuffled)
-
-        for version in version_uris_shuffled:
+        for version in version_uris:
             response = None
             if not HostPluginProtocol.is_default_channel():
                 response = self.fetch(version.uri)
@@ -698,10 +695,13 @@ class WireClient(object):
                                         INCARNATION_FILE_NAME)
         uri = GOAL_STATE_URI.format(self.endpoint)
 
-        goal_state = None
+        # Start updating goalstate, retry on 410
+        fetch_goal_state = True
         for retry in range(0, max_retry):
             try:
-                if goal_state is None:
+                if fetch_goal_state:
+                    fetch_goal_state = False
+
                     xml_text = self.fetch_config(uri, self.get_header())
                     goal_state = GoalState(xml_text)
 
@@ -734,7 +734,7 @@ class WireClient(object):
 
             except ResourceGoneError:
                 logger.info("GoalState is stale -- re-fetching")
-                goal_state = None
+                fetch_goal_state = True
 
             except Exception as e:
                 log_method = logger.info \
@@ -799,35 +799,25 @@ class WireClient(object):
                 self.ext_conf = ExtensionsConfig(xml_text)
         return self.ext_conf
 
-    def get_ext_manifest(self, ext_handler, incarnation):
-
+    def get_ext_manifest(self, ext_handler, goal_state):
         for update_goal_state in [False, True]:
             try:
                 if update_goal_state:
                     self.update_goal_state(forced=True)
-                    incarnation = self.get_goal_state().incarnation
+                    goal_state = self.get_goal_state()
 
                 local_file = MANIFEST_FILE_NAME.format(
                                 ext_handler.name,
-                                incarnation)
+                                goal_state.incarnation)
                 local_file = os.path.join(conf.get_lib_dir(), local_file)
-
-                xml_text = None
-                if not update_goal_state:
-                    try:
-                        xml_text = self.fetch_cache(local_file)
-                    except ProtocolError:
-                        pass
-
-                if xml_text is None:
-                    xml_text = self.fetch_manifest(ext_handler.versionUris)
-                    self.save_cache(local_file, xml_text)
+                xml_text = self.fetch_manifest(ext_handler.versionUris)
+                self.save_cache(local_file, xml_text)
                 return ExtensionManifest(xml_text)
 
             except ResourceGoneError:
                 continue
 
-        raise RestartError("Failed to retrieve extension manifest")
+        raise ProtocolError("Failed to retrieve extension manifest")
 
     def filter_package_list(self, family, ga_manifest, goal_state):
         complete_list = ga_manifest.pkg_list
@@ -895,7 +885,7 @@ class WireClient(object):
             logger.info("Wire protocol version:{0}", PROTOCOL_VERSION)
         elif PROTOCOL_VERSION in version_info.get_supported():
             logger.info("Wire protocol version:{0}", PROTOCOL_VERSION)
-            logger.info("Server preferred version:{0}", preferred)
+            logger.warn("Server preferred version:{0}", preferred)
         else:
             error = ("Agent supported wire protocol version: {0} was not "
                      "advised by Fabric.").format(PROTOCOL_VERSION)

@@ -44,7 +44,7 @@ class AgentConfigError(AgentError):
 
 class AgentNetworkError(AgentError):
     """
-    When network is not available\.
+    When network is not avaiable.
     """
 
     def __init__(self, msg=None, inner=None):
@@ -86,7 +86,6 @@ class DhcpError(AgentError):
     def __init__(self, msg=None, inner=None):
         super(DhcpError, self).__init__(msg, inner)
 
-
 class OSUtilError(AgentError):
     """
     Failed to perform operation to OS configuration
@@ -112,15 +111,6 @@ class ProtocolNotFoundError(ProtocolError):
 
     def __init__(self, msg=None, inner=None):
         super(ProtocolNotFoundError, self).__init__(msg, inner)
-
-
-class RestartError(ProtocolError):
-    """
-    Variant of ProtocolError used to restart processing if the GoalState
-    becomes stale.
-    """
-
-    pass
 
 
 class HttpError(AgentError):
