@@ -131,6 +131,14 @@ def get_data_files(name, version, fullname):
             # Ubuntu15.04+ uses systemd
             set_systemd_files(data_files,
                               src=["init/ubuntu/walinuxagent.service"])
+    elif name == 'debian':
+        set_bin_files(data_files)
+        set_conf_files(data_files, src=["config/debian/waagent.conf"])
+        set_logrotate_files(data_files)
+        set_udev_files(data_files)
+        set_systemd_files(data_files,
+                          src=["init/debian/walinuxagent.service"])
+
     elif name == 'suse':
         set_bin_files(data_files)
         set_conf_files(data_files, src=["config/suse/waagent.conf"])
