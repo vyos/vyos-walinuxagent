@@ -46,4 +46,5 @@ cd /tmp/$GIT_BRANCH/packages/script
       }
     }
   }
+}
 
